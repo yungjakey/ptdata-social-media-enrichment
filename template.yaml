@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: Social Media Analytics Enrichment Lambda Function
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment name
+
+  SecretArn:
+    Type: String
+    Description: ARN of the secret containing OpenAI credentials
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch Logs retention period in days
+
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes
+    MemorySize: 512
+    Runtime: python3.12
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+    Tags:
+      Environment: !Ref Environment
+      Service: social-media-enrichment
+
+Resources:
+  SocialMediaEnrichmentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: main.lambda_handler
+      Description: Processes social media data using OpenAI
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref SecretArn
+            - Effect: Allow
+              Action:
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+              Resource: '*'  # Scope this down to specific RDS ARN in production
+      Events:
+        HourlySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Name: SocialMediaEnrichmentSchedule
+            Description: Run social media enrichment every hour
+            Enabled: true
+      LoggingConfig:
+        LogGroup:
+          RetentionInDays: !Ref LogRetentionDays
+
+Outputs:
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref SocialMediaEnrichmentFunction
+
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt SocialMediaEnrichmentFunction.Arn
+
+  LogGroupName:
+    Description: CloudWatch Logs group name
+    Value: !Sub /aws/lambda/${SocialMediaEnrichmentFunction}

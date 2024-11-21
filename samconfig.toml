@@ -1,0 +1,19 @@
+version = 0.1
+[default]
+[default.global.parameters]
+stack_name = "social-media-enrichment"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = true
+
+[default.local_invoke.parameters]
+env_vars = "local_env.json"
