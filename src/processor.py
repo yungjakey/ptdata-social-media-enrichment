@@ -1,9 +1,8 @@
 """Batch processor for social media analytics."""
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
-import openai
 from openai import AsyncOpenAI
 
 from src.model import ProcessingResult
@@ -36,7 +35,7 @@ class BatchProcessor:
         self.config = config
         self.schema = schema
 
-    async def process_record(self, record: dict[str, Any]) -> Optional[ProcessingResult]:
+    async def process_record(self, record: dict[str, Any]) -> ProcessingResult | None:
         """Process a single social media record.
         
         Args:

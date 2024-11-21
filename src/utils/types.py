@@ -1,4 +1,5 @@
 """Type handling utilities."""
+
 import json
 from datetime import datetime
 from typing import Any
@@ -19,7 +20,6 @@ class TypeHandler:
         "datetime": datetime,
         "list[str]": list[str],
         "dict[str, Any]": dict[str, Any],
-
         # Database types
         "integer": int,
         "bigint": int,
@@ -70,15 +70,13 @@ class TypeHandler:
             return {"doubleValue": value}
         if isinstance(value, datetime):
             return {"stringValue": value.isoformat()}
-        if isinstance(value, (list, dict)):
+        if isinstance(value, list | dict):
             return {"stringValue": json.dumps(value)}
         return {"stringValue": str(value)}
 
     @classmethod
     def get_model_fields(
-        cls,
-        model_class: type,
-        exclude_fields: set[str] | None = None
+        cls, model_class: type, exclude_fields: set[str] | None = None
     ) -> dict[str, str]:
         """Get fields and their format strings from a model class."""
         exclude_fields = exclude_fields or {"id", "post_key", "evaluation_time"}
