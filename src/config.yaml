@@ -1,33 +1,41 @@
 aws:
   output: "s3://aws-orf-social-media-analytics/dev/gold/"
-  primary: ["id", "post_key", "channel_key", "date_key"]
 
+  # athena
+  client:
+    max_retries: 10
+    wait_time: 1
+    max_wait_time: 60
+
+  # db 
   db:
-    sources: 
+    primary: ["id", "post_key", "channel_key", "date_key"]
+    source: 
       - database: "dev_gold"
         table: "fact_social_media_reaction_post"
       - database: "dev_gold"
         table: "dim_post_details"
-    targets:
+    target:
       - database: "dev_gold"
-        table: "dim_social_media_ai_details"
-      - database: "dev_gold"
-        table: "fact_social_media_ai_metrics"
+        postfix: "social_media_ai_metrics_enriched"
 
-  client:
+
 openai:
+  # orchestration
   max_workers: 5
+
   client:
     api_version: "2024-10-01-preview"
     engine: "gpt-4o-mini"
 
+  # model
   model:
     temperature: 0.3
     max_tokens: 1000
   
-
+  # input
   prompts:
-    system: |
+    target: |
       You are a social media analytics expert. Analyze the following social media post and provide metrics and insights.
 
       Analyze the input data and provide metrics and details in the format specified above. For metrics, provide scores between 0 and 1.
@@ -36,7 +44,7 @@ openai:
 
       Format your response as a JSON object with the following structure:
       {0}
-    user: |
+    source: |
       Input data:
       {0}
 

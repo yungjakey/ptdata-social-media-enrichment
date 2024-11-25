@@ -9,8 +9,9 @@ from typing import Any
 
 from openai import AsyncClient
 from openai.types.chat import ChatCompletion
+from pydantic import BaseModel
 
-from src.common import OpenAIConfig, Payload
+from src.azure.config import OpenAIConfig, Payload
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,9 @@ logger = logging.getLogger(__name__)
 class OpenAIClient:
     """OpenAI client for batch processing."""
 
-    def __init__(self, api_key: str, api_base: str, max_workers: int = 10, **kwargs):
+    def __init__(self, config: OpenAIConfig) -> None:
         """Initialize OpenAI client with config."""
-        self.config = OpenAIConfig.get_instance(
-            api_key=api_key, base_url=api_base, max_workers=max_workers, **kwargs
-        )
+        self.config = config
         self.client = AsyncClient(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
@@ -46,16 +45,22 @@ class OpenAIClient:
                 logger.error("Error processing record: %s", str(e))
                 raise
 
-    async def process_batch(self, prompts: list[dict[str, type]]) -> list[dict[str, type]]:
+    async def process_batch(
+        self, records: list[dict[str, Any]], input_model: BaseModel, output_model: BaseModel
+    ) -> list[dict[str, type]]:
         """Process batch of records concurrently."""
         logger.info(
-            "Starting %d workers to process %d records", self.config.max_workers, len(prompts)
+            "Starting %d workers to process %d records", self.config.max_workers, len(records)
         )
 
-        batch = [Payload(**prompt) for prompt in prompts]
+        tasks = []
+        for record in records:
+            user = input_model.prompt(**record)
+            system = output_model.prompt(**output_model.dict())
+            payload = Payload(user=user, system=system, config=self.config.model)
+            tasks.append(self._process_record(payload))
 
         try:
-            tasks = [self._process_record(record) for record in batch]
             response = await asyncio.gather(*tasks, return_exceptions=True)
 
         except Exception as e:

@@ -1,3 +1,6 @@
-from .client import OpenAIClient
+"""Azure package for social media analytics."""
 
-__all__ = ["OpenAIClient"]
+from .client import OpenAIClient
+from .config import OpenAIConfig
+
+__all__ = ["OpenAIClient", "OpenAIConfig"]

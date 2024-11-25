@@ -1,178 +1,120 @@
-"""Main entry point for social media enrichment pipeline."""
-
-from __future__ import annotations
-
 import asyncio
-import json
-import logging
-import sys
-from pathlib import Path
-from typing import Any
+from typing import Literal  # Add this import at the top
 
 from omegaconf import DictConfig, OmegaConf
+from path import Path
+from pydantic import BaseModel
 
-from src.aws import AWSClient
-from src.azure import OpenAIClient
-from src.common import RootConfig
+from src.aws import AWSClient, AWSConfig
+from src.azure import OpenAIClient, OpenAIConfig
+from src.common import LoggerConfig
 from src.models import Builder
 
-logger = logging.getLogger(__name__)
 
+def build_model(
+    kind: Literal["source", "target"],
+    acl: AWSClient,
+    acfg: AWSConfig,
+    ocfg: OpenAIConfig,
+) -> BaseModel:
+    schema = {}
 
-def setup_logging(config: DictConfig) -> None:
-    """Configure logging from config."""
-    logging.basicConfig(
-        level=config.level,
-        format="%(asctime)s - %(levelname)s - %(message)s",
+    # Get tables for the specified kind (source or target)
+    tables = getattr(acfg.db, kind)
+    for table in tables:
+        table_meta = acl.get_table(table.database, table.table)
+        schema.update(table_meta.schema)
+
+    # Get the name and prompt based on kind
+    name = "Input" if kind == "source" else "Output"
+    prompt = getattr(ocfg.prompts, kind)
+
+    return (
+        Builder(name)
+        .from_schema(schema)
+        .with_primary_keys(acfg.db.primary)
+        .with_prompt(prompt)
+        .build()
     )
 
 
-def init_config(config_path: str) -> RootConfig:
-    """Initialize root configuration from YAML file."""
-    config = OmegaConf.load(config_path)
-    return RootConfig.from_config(config)
+def main(config: DictConfig):
+    logging = config.logging
+    lcfg = LoggerConfig.from_config(**logging)
+    lcfg.configure()
 
+    acfg: AWSConfig = AWSConfig.from_config(**config.aws)
+    ocfg: OpenAIConfig = OpenAIConfig.from_config(**config.openai)
 
-def create_model(tables: list[Table], prompts: dict[str, str]) -> tuple[type[Any], type[Any]]:
-    """Create input and output models from Glue schema."""
-    # Input model from Glue schema
-    input_builder = Builder("Input")
-    if "system" in prompts:
-        input_builder.with_prompt(prompts["system"])
-    for table in tables:
-        schema = table.get_schema()
-        input_builder.from_schema(schema)
-    input_model = input_builder.build()
+    with AWSClient(acfg) as acl:
+        # Build source and target models
+        source_model = build_model("source", acl, acfg, ocfg)
+        target_model = build_model("target", acl, acfg, ocfg)
 
-    # Output model from Glue schema
-    output_builder = Builder("Output")
-    for table in tables:
-        schema = table.get_schema()
-        output_builder.from_schema(schema)
-    output_model = output_builder.build()
+        # Get latest data from source tables
+        dfs = []
+        for source in acfg.db.source:
+            # Use the database client's parameterized query execution
+            df = acl.execute_query(
+                query_params={
+                    "database": source.database,
+                    "table": source.table,
+                    "limit": 1000,
+                    "order_by": "date_key",
+                },
+                database=source.database,
+                query_template="SELECT * FROM {database}.{table} ORDER BY {order_by} DESC LIMIT {limit}",
+            )
+            dfs.append(df)
 
-    return input_model, output_model
+        # Join data on primary keys
+        df = dfs[0]
+        for other in dfs[1:]:
+            df = df.merge(other, on=acfg.db.primary, how="inner")
+            df.drop_duplicates(subset=acfg.db.primary, inplace=True)
 
+        # Process through Azure OpenAI
+        with OpenAIClient(ocfg) as ocl:
+            results = asyncio.run(
+                ocl.process_batch(df.to_dict("records"), source_model, target_model)
+            )
 
-async def fetch_data(aws_client: AWSClient, config: RootConfig) -> list[dict[str, Any]]:
-    """Fetch data from Athena and join on primary keys."""
-    tables = []
-    for source in config.aws.db.sources:
-        table = aws_client.get_table(source.database, source.table)
-        tables.append(table)
+            # Split results into dimensions and facts based on data types
+            for df, target in zip(results, acfg.db.target, strict=False):
+                # Create dimension and fact dataframes
+                non_numerical_cols = df.select_dtypes(exclude=["number"]).columns.tolist()
+                dims_df = df[non_numerical_cols] if non_numerical_cols else None
+                if dims_df and not dims_df.empty:
+                    placeholders = ", ".join(["%s"] * len(dims_df.columns))
+                    acl.execute_query(
+                        query_params={
+                            "database": target.database,
+                            "table": f"dim_{target.postfix}",
+                            "placeholders": placeholders,
+                            "values": dims_df.values.tolist(),
+                        },
+                        database=target.database,
+                        query_template="INSERT INTO {database}.{table} VALUES ({placeholders})",
+                    )
 
-    # Build query to join tables on primary keys
-    query = f"""
-    SELECT *
-    FROM {tables[0].database}.{tables[0].name} t0
-    """
-    for i, table in enumerate(tables[1:], 1):
-        keys = " AND ".join(f"t0.{k} = t{i}.{k}" for k in config.aws.primary)
-        query += f"""
-        JOIN {table.database}.{table.name} t{i}
-        ON {keys}
-        """
-
-    df = aws_client.execute_query(query, tables[0].database)
-    return df.to_dict("records")
-
-
-async def process_data(
-    records: list[dict[str, Any]],
-    openai_client: OpenAIClient,
-    input_model: type[Any],
-    prompts: dict[str, str],
-) -> list[dict[str, Any]]:
-    """Process data with OpenAI."""
-    # Create prompts for each record
-    batch_prompts = []
-    for record in records:
-        instance = input_model(**record)
-        prompt = prompts["user"].format(json.dumps(instance.dict(), indent=2))
-        batch_prompts.append({
-            "model": "gpt-4",
-            "messages": [
-                {"role": "system", "content": prompts["system"]},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1000,
-        })
-
-    # Process batch with OpenAI
-    return await openai_client.process_batch(batch_prompts)
-
-
-async def write_data(
-    aws_client: AWSClient,
-    config: RootConfig,
-    results: list[dict[str, Any]],
-    output_model: type[Any],
-) -> None:
-    """Write data back to AWS."""
-    # Validate results with output model
-    validated = [output_model(**result) for result in results]
-    data = [model.dict() for model in validated]
-
-    # Write to each target table
-    for target in config.aws.db.targets:
-        table = aws_client.get_table(target.database, target.table)
-        columns = ", ".join(table.get_schema().keys())
-        values = ", ".join(["%s"] * len(table.get_schema()))
-        
-        query = f"""
-        INSERT INTO {target.database}.{target.table} ({columns})
-        VALUES ({values})
-        """
-        
-        aws_client.execute_query(query, target.database)
-
-
-async def main_async() -> None:
-    """Async main function."""
-    try:
-        # Initialize config
-        config_path = Path(__file__).parent / "config.yaml"
-        config = init_config(str(config_path))
-        setup_logging(config.logging)
-
-        # Initialize clients
-        aws_client = AWSClient(output=config.aws.output)
-        openai_client = OpenAIClient(
-            api_key=config.openai.client.api_key,
-            api_base=config.openai.client.base_url,
-            max_workers=config.openai.max_workers,
-        )
-
-        async with openai_client:
-            # Create models from schema
-            tables = [
-                aws_client.get_table(source.database, source.table)
-                for source in config.aws.db.sources
-            ]
-            input_model, output_model = create_model(tables, config.openai.prompts)
-
-            # Process pipeline
-            records = await fetch_data(aws_client, config)
-            results = await process_data(records, openai_client, input_model, config.openai.prompts)
-            await write_data(aws_client, config, results, output_model)
-
-    except Exception as e:
-        logger.error("Pipeline failed: %s", str(e))
-        raise
-
-
-def main() -> None:
-    """Main entry point."""
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        logger.info("Pipeline interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        logger.error("Pipeline failed: %s", str(e))
-        sys.exit(1)
+                # Write facts
+                numerical_cols = df.select_dtypes(include=["number"]).columns.tolist()
+                facts_df = df[numerical_cols] if numerical_cols else None
+                if facts_df and not facts_df.empty:
+                    placeholders = ", ".join(["%s"] * len(facts_df.columns))
+                    acl.execute_query(
+                        query_params={
+                            "database": target.database,
+                            "table": f"fact_{target.postfix}",
+                            "placeholders": placeholders,
+                            "values": facts_df.values.tolist(),
+                        },
+                        database=target.database,
+                        query_template="INSERT INTO {database}.{table} VALUES ({placeholders})",
+                    )
+    return
 
 
 if __name__ == "__main__":
-    main()
+    config = DictConfig(OmegaConf.load(f"{Path(__file__)}/config.yaml"))
+    main(config)
