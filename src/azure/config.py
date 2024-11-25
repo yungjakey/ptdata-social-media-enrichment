@@ -105,7 +105,22 @@ class ModelConfig(DataConfig):
 
 @dataclass(frozen=True)
 class OpenAIConfig(SingletonConfig):
-    """OpenAI service configuration."""
+    """Configuration for Azure OpenAI services.
+
+    Manages settings for Azure OpenAI including:
+    - API authentication
+    - Model configurations
+    - Batch processing parameters
+    - Prompts for input and output models
+
+    This is a singleton configuration to ensure consistent settings across the application.
+
+    Attributes:
+        client (ClientConfig): Client configuration
+        model (ModelConfig): Model-specific settings
+        max_workers (int): Maximum number of concurrent workers
+        prompts (dict): Templates for source and target prompts
+    """
 
     client: ClientConfig
     model: ModelConfig
@@ -121,12 +136,12 @@ class OpenAIConfig(SingletonConfig):
                 raise ValueError("OpenAI configuration section is missing")
 
             client_config = ClientConfig.from_dict(openai_config.get("client", {}))
-            if not client_config.api_key or not client_config.base_url:
+            if not client_config.api_key or not client_config.api_base:
                 raise ValueError(
                     "OpenAI API credentials (api_key, base_url) must be specified in client config"
                 )
 
-            model_config = ModelConfig.from_dict(openai_config.get("model", {}), client_config)
+            model_config = ModelConfig.from_dict(openai_config.get("model", {}))
 
             return cls.get_instance(
                 client=client_config,

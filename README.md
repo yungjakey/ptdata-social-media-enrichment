@@ -23,18 +23,18 @@ This project enriches social media data using AWS Glue/Athena for data extractio
 ```
 src/
 ├── aws/              # AWS service clients
-│   └── client.py     # Glue and Athena operations
+│   ├── client.py     # Glue and Athena operations
+│   └── config.py     # AWS configuration classes
 ├── azure/            # Azure/OpenAI integration
-│   └── client.py     # OpenAI batch processing
+│   ├── client.py     # OpenAI batch processing
+│   └── config.py     # OpenAI configuration classes
 ├── common/           # Shared utilities
-│   ├── config.py     # Configuration classes
+│   ├── config.py     # Base configuration classes
 │   └── utils.py      # Helper functions
 ├── models/           # Data models
-│   ├── builder.py    # Dynamic schema builder
-│   ├── input.py      # Input data models
-│   └── output.py     # Output data models
+│   └── builder.py    # Dynamic model builder
 ├── config.yaml       # Configuration file
-└── example.py        # Example implementation
+└── main.py          # Main application entry
 ```
 
 ## Configuration
@@ -44,26 +44,48 @@ The project uses a `config.yaml` file with the following structure:
 ```yaml
 aws:
   output: "s3://bucket/path/"    # S3 output path
+  region: "eu-central-1"         # AWS region
   primary: ["id"]                # Primary key for joins
   db:
-    sources:                     # Source tables
+    source:                      # Source table(s)
       - database: "dev_gold"
         table: "fact_social_media_reaction_post"
-      - database: "dev_gold"
-        table: "dim_post_details"
-    targets:                     # Target tables
+    target:                      # Target table(s)
       - database: "dev_gold"
         table: "dim_social_media_ai_details"
-      - database: "dev_gold"
-        table: "fact_social_media_ai_metrics"
 
 openai:
-  api_version: "2024-10-01-preview"
-  engine: "gpt-4o-mini"
-  temperature: 0.3
-  max_tokens: 1000
-  workers: 5
+  client:
+    api_key: ${OPENAI_API_KEY}   # From environment
+    base_url: "https://..."      # Azure OpenAI endpoint
+  model:
+    temperature: 0.3             # Model parameters
+    max_tokens: 1000
+  max_workers: 5                 # Concurrent requests
+  prompts:                       # Model prompts
+    source: "Analyze..."         # Input prompt
+    target: "Format..."          # Output prompt
 ```
+
+## Key Components
+
+### AWSClient
+- Manages AWS Glue and Athena operations
+- Handles query execution and pagination
+- Retrieves table metadata and schemas
+- Implements error handling and retries
+
+### OpenAIClient
+- Processes data through Azure OpenAI
+- Handles concurrent batch processing
+- Implements rate limiting
+- Manages async operations
+
+### Model Builder
+- Creates dynamic Pydantic models
+- Builds source and target schemas
+- Handles data validation
+- Supports nested structures
 
 ## Prerequisites
 
@@ -79,7 +101,7 @@ openai:
 
 ## Usage
 
-The example implementation in `example.py` demonstrates:
+The example implementation in `main.py` demonstrates:
 
 1. Schema Creation:
    - Extracts schemas from AWS Glue metadata
@@ -98,7 +120,7 @@ The example implementation in `example.py` demonstrates:
 To run the example:
 
 ```bash
-python -m src.example
+python -m src.main
 ```
 
 ## Development
@@ -108,12 +130,6 @@ The codebase uses:
 - AWS Boto3 for AWS services
 - OpenAI's API for content analysis
 - Asyncio for concurrent processing
-
-Key components:
-
-1. `Builder`: Creates dynamic Pydantic models from Glue metadata
-2. `AWSClient`: Handles Glue/Athena operations
-3. `OpenAIClient`: Manages batch processing with OpenAI
 
 ## Error Handling
 

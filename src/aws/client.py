@@ -64,7 +64,21 @@ class Table:
 
 
 class AWSClient:
-    """AWS client for Glue and Athena operations."""
+    """A client for interacting with AWS Glue and Athena services.
+
+    This client provides functionality to:
+    - Execute SQL queries on AWS Athena
+    - Retrieve table metadata from AWS Glue
+    - Handle query pagination and result processing
+    - Manage AWS session and client lifecycle
+
+    The client implements both sync and async context managers for resource cleanup.
+
+    Attributes:
+        config (AWSConfig): Configuration for AWS services including region and output location
+        athena: Boto3 Athena client for query execution
+        glue: Boto3 Glue client for metadata operations
+    """
 
     def __init__(self, config: AWSConfig) -> None:
         """Initialize AWS client with config."""
@@ -140,10 +154,11 @@ class AWSClient:
             return self._wait_for_query(query_id)
 
         except ClientError as e:
-            error_code = e.response["Error"]["Code"]
-            error_msg = e.response["Error"]["Message"]
-            logger.error("AWS error executing query: %s - %s", error_code, error_msg)
-            raise Exception(f"Error executing Athena query: {error_msg}") from e
+            err = e.response.get("Error")
+            code = err.get("Code", "")
+            msg = err.get("Message", "")
+
+            raise Exception(f"Error {code} executing Athena query: {msg}") from e
 
     def _wait_for_query(self, query_id: str) -> DataFrame:
         """Wait for query completion and return results."""
@@ -181,6 +196,7 @@ class AWSClient:
                 error_code = e.response["Error"]["Code"]
                 error_msg = e.response["Error"]["Message"]
                 logger.error("AWS error checking status: %s - %s", error_code, error_msg)
+
                 raise Exception(f"Error checking query status: {error_msg}") from e
 
         logger.error("Query timed out: %s", query_id)
@@ -209,8 +225,7 @@ class AWSClient:
             return Table.from_glue(doc.strip(), table_data)
 
         except ClientError as e:
-            logger.error("AWS Glue error: %s", str(e))
-            raise
+            raise Exception("AWS Glue error: %s", str(e)) from e
 
     def __enter__(self) -> AWSClient:
         """Context manager entry."""

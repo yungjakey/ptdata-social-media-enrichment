@@ -17,7 +17,21 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIClient:
-    """OpenAI client for batch processing."""
+    """A client for batch processing with Azure OpenAI services.
+
+    This client provides functionality to:
+    - Process batches of records concurrently through Azure OpenAI
+    - Apply rate limiting using semaphores
+    - Handle both sync and async operations
+    - Parse and validate responses using Pydantic models
+
+    The client implements both sync and async context managers for proper cleanup.
+
+    Attributes:
+        config (OpenAIConfig): Configuration for Azure OpenAI including API keys and model settings
+        client (AsyncClient): Async client for Azure OpenAI API calls
+        semaphore (asyncio.Semaphore): Rate limiter for concurrent requests
+    """
 
     def __init__(self, config: OpenAIConfig) -> None:
         """Initialize OpenAI client with config."""

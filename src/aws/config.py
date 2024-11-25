@@ -104,7 +104,24 @@ class DBConfig(DataConfig):
 
 @dataclass(frozen=True)
 class AWSConfig(SingletonConfig):
-    """AWS service configuration."""
+    """Configuration for AWS services.
+
+    Manages configuration for AWS Glue and Athena services including:
+    - AWS region settings
+    - Database configurations
+    - Query output locations
+    - Retry and timeout settings
+
+    This is a singleton configuration to ensure consistent settings across the application.
+
+    Attributes:
+        output (str): S3 path for query results
+        region (str): AWS region name
+        db (DBConfig): Database configuration including source and target tables
+        max_retries (int): Maximum number of query retry attempts
+        wait_time (float): Initial wait time between retries
+        max_wait_time (float): Maximum wait time between retries
+    """
 
     output: str
     region: str = "eu-central-1"
