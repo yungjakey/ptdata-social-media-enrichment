@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "ptdata_social_media_analytics"
+name = "ptdata_social_media_enrichment"
 version = "0.1.0"
-description = "PTData Social Media Analytics Lambdas"
+description = "PTData Social Media Enrichment Lambdas"
 authors = ["Jakob Melchard <jakob.melchard@orf.at>"]  # Add your actual info here
 packages = [{ include = "src" }]
 
@@ -9,6 +9,7 @@ packages = [{ include = "src" }]
 python = "~3.12"
 openai = "1.54.4"
 boto3 = "1.34.34"
+omegaconf = "2.3.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.1.9"

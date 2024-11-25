@@ -27,13 +27,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Read SQL template and replace variables
-SQL=$(cat "$(dirname "$0")/init.sql" | \
-  sed "s|\${database}|$DATABASE|g" | \
-  sed "s|\${bucket_path}|$BUCKET_PATH|g")
+# Create tables
+for sql_file in $(dirname "$0")/*.sql; do
+  if [ -f "$sql_file" ]; then
+    echo "Creating table from $sql_file..."
+    SQL=$(cat "$sql_file" | \
+      sed "s|\${database}|$DATABASE|g" | \
+      sed "s|\${bucket_path}|$BUCKET_PATH|g")
 
-# Execute SQL using AWS CLI
-aws athena start-query-execution \
-  --query-string "$SQL" \
-  --work-group "$WORKGROUP" \
-  --query-execution-context "Database=$DATABASE"
+    aws athena start-query-execution \
+      --query-string "$SQL" \
+      --work-group "$WORKGROUP" \
+      --query-execution-context "Database=$DATABASE"
+  fi
+done
+
+echo "All tables created successfully!"

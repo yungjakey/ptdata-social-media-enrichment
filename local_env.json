@@ -1,6 +1,0 @@
-{
-  "SocialMediaEnrichmentFunction": {
-    "ENVIRONMENT": "dev",
-    "PYTHONPATH": "/var/task"
-  }
-}

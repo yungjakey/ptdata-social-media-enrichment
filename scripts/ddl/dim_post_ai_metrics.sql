@@ -1,16 +1,15 @@
 -- Create dimensions table for AI-generated post details
-CREATE TABLE IF NOT EXISTS dev_gold.dim_post_ai_details (
-    id BINARY,
+CREATE TABLE IF NOT EXISTS dev_gold.dim_ai_metrics (
+    id BINARY
     post_key BINARY,
     evaluation_time TIMESTAMP,
     key_topics ARRAY<STRING>,
     content_category STRING,
     audience_type STRING,
     tone STRING,
-    recommendations ARRAY<STRING>,
-    additional_insights MAP<STRING, STRING>
+    recommendations ARRAY<STRING>
 )
-LOCATION 's3://aws-orf-social-media-analytics/dev/gold/dim/dim_post_ai_details/'
+LOCATION 's3://aws-orf-social-media-analytics/dev/gold/dim/ai_metrics'
 TBLPROPERTIES (
     'table_type' = 'ICEBERG',
     'format' = 'PARQUET',

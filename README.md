@@ -1,6 +1,6 @@
 # Social Media Analytics Enrichment
 
-A serverless AWS Lambda function that enriches social media analytics data using OpenAI's language models. This service processes social media metrics and post details to generate AI-powered insights.
+This project enriches social media data using AWS Glue/Athena for data extraction and OpenAI for content analysis.
 
 ## Architecture
 
@@ -11,130 +11,119 @@ A serverless AWS Lambda function that enriches social media analytics data using
 
 2. **Processing Pipeline**
    ```
-   [RDS Tables] → [Lambda Function] → [OpenAI API] → [Enriched Data Tables]
+   [RDS Tables] → [AWS Glue/Athena] → [OpenAI API] → [Enriched Data Tables]
    ```
 
 3. **Output Data**
    - AI-enriched metrics in `fact_social_media_ai_metrics`
    - AI-enriched details in `dim_social_media_ai_details`
 
-## Prerequisites
-
-- Python 3.12+
-- AWS Account with access to:
-  - Lambda
-  - RDS Data API
-  - Secrets Manager
-- Azure OpenAI API access
-
-## Dependencies
+## Project Structure
 
 ```
-boto3~=1.34.34    # AWS SDK for Python
-openai~=1.54.4    # OpenAI API client
-omegaconf~=2.3.0  # Configuration management
+src/
+├── aws/              # AWS service clients
+│   └── client.py     # Glue and Athena operations
+├── azure/            # Azure/OpenAI integration
+│   └── client.py     # OpenAI batch processing
+├── common/           # Shared utilities
+│   ├── config.py     # Configuration classes
+│   └── utils.py      # Helper functions
+├── models/           # Data models
+│   ├── builder.py    # Dynamic schema builder
+│   ├── input.py      # Input data models
+│   └── output.py     # Output data models
+├── config.yaml       # Configuration file
+└── example.py        # Example implementation
 ```
 
 ## Configuration
 
-Create a `src/config.yaml` file:
+The project uses a `config.yaml` file with the following structure:
 
 ```yaml
 aws:
-  secret_arn: "your-secret-arn"  # ARN of the secret containing OpenAI credentials
+  output: "s3://bucket/path/"    # S3 output path
+  primary: ["id"]                # Primary key for joins
+  db:
+    sources:                     # Source tables
+      - database: "dev_gold"
+        table: "fact_social_media_reaction_post"
+      - database: "dev_gold"
+        table: "dim_post_details"
+    targets:                     # Target tables
+      - database: "dev_gold"
+        table: "dim_social_media_ai_details"
+      - database: "dev_gold"
+        table: "fact_social_media_ai_metrics"
 
 openai:
-  api_version: "2024-02-15"
-  engine: "your-deployment-name"
-  temperature: 0.7
+  api_version: "2024-10-01-preview"
+  engine: "gpt-4o-mini"
+  temperature: 0.3
   max_tokens: 1000
-
-tables:
-  source:
-    fact_social_media_reaction_post: "your_metrics_table"
-    dim_post_details: "your_details_table"
-  target:
-    fact_social_media_ai_metrics: "your_ai_metrics_table"
-    dim_social_media_ai_details: "your_ai_details_table"
-
-models:
-  post: |
-    You are an AI analyst specialized in social media content.
-    Analyze the provided metrics and details to generate insights.
-    Return your analysis in the following JSON format:
-    {
-      "sentiment": "positive|negative|neutral",
-      "engagement_score": 0-100,
-      "content_category": "string",
-      "key_topics": ["topic1", "topic2"],
-      "recommendations": ["rec1", "rec2"]
-    }
+  workers: 5
 ```
 
-## AWS Secrets Manager
+## Prerequisites
 
-Create a secret with the following structure:
-```json
-{
-  "OPENAI_API_KEY": "your-api-key",
-  "OPENAI_API_BASE": "your-azure-endpoint"
-}
-```
+1. AWS credentials configured with access to:
+   - AWS Glue
+   - Amazon Athena
+   - Amazon S3
 
-## Database Schema
-
-### Input Tables
-
-#### fact_social_media_reaction_post
-- id: bytes (primary key)
-- post_key: string
-- date_key: datetime
-- processed: boolean
-- [other metrics columns]
-
-#### dim_post_details
-- post_key: string (primary key)
-- [other details columns]
-
-### Output Tables
-
-#### fact_social_media_ai_metrics
-- id: bytes (primary key)
-- post_key: string
-- date_key: datetime
-- analysis_time: datetime
-- sentiment: string
-- engagement_score: integer
-- content_category: string
-
-#### dim_social_media_ai_details
-- id: bytes (primary key)
-- post_key: string
-- last_update_time: datetime
-- key_topics: json
-- recommendations: json
+2. OpenAI API key set as environment variable:
+   ```bash
+   export OPENAI_API_KEY="your-api-key"
+   ```
 
 ## Usage
 
-1. Deploy the Lambda function using AWS SAM or your preferred deployment method
-2. Configure the necessary IAM roles and permissions
-3. Set up the database tables
-4. Create the required AWS Secrets Manager secret
-5. The function will:
-   - Fetch unprocessed records (limited to 100 at a time)
-   - Process them through OpenAI
-   - Store the enriched data
-   - Mark the source records as processed
+The example implementation in `example.py` demonstrates:
+
+1. Schema Creation:
+   - Extracts schemas from AWS Glue metadata
+   - Creates dynamic Pydantic models for validation
+
+2. Data Processing:
+   - Queries source tables from Athena
+   - Joins data using configured primary keys
+   - Validates data against schemas
+
+3. OpenAI Integration:
+   - Processes data in batches
+   - Uses configurable workers for parallelization
+   - Handles rate limiting and errors
+
+To run the example:
+
+```bash
+python -m src.example
+```
+
+## Development
+
+The codebase uses:
+- Pydantic for data validation
+- AWS Boto3 for AWS services
+- OpenAI's API for content analysis
+- Asyncio for concurrent processing
+
+Key components:
+
+1. `Builder`: Creates dynamic Pydantic models from Glue metadata
+2. `AWSClient`: Handles Glue/Athena operations
+3. `OpenAIClient`: Manages batch processing with OpenAI
 
 ## Error Handling
 
-The service includes comprehensive error handling:
-- Database operation errors
+The code includes comprehensive error handling for:
+- AWS service errors
+- Schema validation errors
 - OpenAI API errors
-- Data validation errors
-- Configuration errors
+- Batch processing failures
 
-All errors are logged with appropriate context for debugging.
+Errors are logged using Python's logging module with configurable levels.
 
 ## Security
 
