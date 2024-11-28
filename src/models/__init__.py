@@ -1,4 +1,4 @@
-"""Model package for social media analytics."""
+"""Models package for social media analytics."""
 
 from .builder import Builder
 

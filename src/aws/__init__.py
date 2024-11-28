@@ -1,6 +1,6 @@
 """AWS package for social media analytics."""
 
 from .client import AWSClient
-from .config import AWSConfig
+from .types import AWSConfig
 
 __all__ = ["AWSClient", "AWSConfig"]

@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Default values
+DIRNAME=$(dirname "$0")
 DATABASE="dev_gold"
 BUCKET_PATH="s3://aws-orf-social-media-analytics/dev/gold"
 WORKGROUP="primary"
@@ -8,6 +9,10 @@ WORKGROUP="primary"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
+      --folder)
+      DIRNAME="$2"
+      shift 2
+      ;;
     --database)
       DATABASE="$2"
       shift 2
@@ -28,7 +33,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Create tables
-for sql_file in $(dirname "$0")/*.sql; do
+for sql_file in $DIRNAME/*.sql; do
   if [ -f "$sql_file" ]; then
     echo "Creating table from $sql_file..."
     SQL=$(cat "$sql_file" | \
