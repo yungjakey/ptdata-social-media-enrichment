@@ -11,37 +11,34 @@ from openai import AsyncClient, RateLimitError
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
-from src.azure.prompts import Prompts
-from src.azure.types import Message, OpenAIConfig
+from src.inference.types import OpenAIConfig
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAIClient:
-    """A client for batch processing with Azure OpenAI services.
+    """OpenAI client for batch processing social media content."""
 
-    This client provides functionality to:
-    - Process batches of records concurrently through Azure OpenAI
-    - Apply rate limiting using semaphores
-    - Handle both sync and async operations
-    - Parse and validate responses using Pydantic models
-
-    The client implements both sync and async context managers for proper cleanup.
-
-    Attributes:
-        config (OpenAIConfig): Configuration for Azure OpenAI including API keys and model settings
-        client (AsyncClient): Async client for Azure OpenAI API calls
-        semaphore (asyncio.Semaphore): Rate limiter for concurrent requests
-    """
-
-    def __init__(self, config: OpenAIConfig) -> None:
+    def __init__(self, config: dict[str, type]) -> None:
         """Initialize OpenAI client with config."""
-        self.config = config
-        self.client = AsyncClient(
+        self.config = OpenAIConfig.from_config(config)
+        self.semaphore = asyncio.Semaphore(self.config.max_workers)
+        self._client = None
+
+    def connect(self) -> AsyncClient:
+        """Establish connection to Azure OpenAI."""
+        self._client = AsyncClient(
             api_key=self.config.api_key,
             base_url=self.config.api_base,
         )
-        self.semaphore = asyncio.Semaphore(self.config.max_workers)
+        return self._client
+
+    @property
+    def client(self) -> AsyncClient:
+        """Get OpenAI client instance."""
+        if self._client is None:
+            self._client = self.connect()
+        return self._client
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type(RateLimitError),
@@ -49,7 +46,9 @@ class OpenAIClient:
         stop=tenacity.stop_after_attempt(5),
         reraise=True,
     )
-    async def _process_record(self, messages: list[Message], **kwargs: type) -> dict[str, type]:
+    async def _process_record(
+        self, messages: list[dict[str, str]], response_format: BaseModel
+    ) -> BaseModel:
         """Process single record with rate limiting."""
         async with self.semaphore:
             logger.debug("Processing messages: %s", messages)
@@ -63,8 +62,7 @@ class OpenAIClient:
                 presence_penalty=self.config.presence_penalty,
                 frequency_penalty=self.config.frequency_penalty,
                 stop=self.config.stop,
-                response_format=self.config.response_format,
-                **kwargs,
+                response_format=response_format,
             )
 
             if not completion.choices:
@@ -75,7 +73,7 @@ class OpenAIClient:
             return result
 
     async def process_batch(
-        self, records: list[dict[str, type]], input_model: BaseModel, output_model: BaseModel
+        self, records: list[dict[str, type]], inpt: BaseModel, outpt: BaseModel
     ) -> list[BaseModel]:
         """Process batch of records concurrently."""
         logger.info(
@@ -83,20 +81,23 @@ class OpenAIClient:
         )
         tasks = []
         for record in records:
-            # TODO: this is garbage
             try:
-                input_model(**record)
+                record = inpt(**record)
             except Exception as e:
-                logger.error("Invalid input record: %s", str(e))
-                raise ValueError(f"Invalid input record: {str(e)}") from e
+                raise ValueError(f"Invalid input record: {record}") from e
 
-            messages = Prompts.create_messages(input_model, output_model, **record)
+            system = outpt.__doc__
+            user = f"{inpt.__doc__}\n{json.dumps(record.model_dump_json())}"
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
             tasks.append(self._process_record(messages=messages))
 
         try:
             response = await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
-            raise Exception("Batch processing failed: %s", str(e)) from e
+            raise RuntimeError("Batch processing failed: %s", str(e)) from e
 
         # Parse results
         successful, failed = [], []
@@ -105,9 +106,8 @@ class OpenAIClient:
                 failed.append(result)
             else:
                 try:
-                    successful.append(output_model(**result))
+                    successful.append(outpt(**result))
                 except Exception as e:
-                    logger.error("Failed to parse result: %s", str(e))
                     failed.append(e)
 
         logger.info(
@@ -126,9 +126,9 @@ class OpenAIClient:
 
     def __exit__(self, exc_type: type | None, exc: Exception | None, tb: type | None) -> None:
         """Exit sync context manager."""
-        if self.client:
-            asyncio.run(self.client.close())
-            self.client = None
+        if self._client:
+            asyncio.run(self._client.close())
+            self._client = None
 
     async def __aenter__(self) -> OpenAIClient:
         """Enter async context manager."""
@@ -138,6 +138,6 @@ class OpenAIClient:
         self, exc_type: type | None, exc: Exception | None, tb: type | None
     ) -> None:
         """Exit async context manager."""
-        if self.client:
-            await self.client.close()
-            self.client = None
+        if self._client:
+            await self._client.close()
+            self._client = None

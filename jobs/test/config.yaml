@@ -1,0 +1,68 @@
+connector:
+  type: athena  # Maps to ConnectorType
+  name: social-media
+  connection:  # Shared connection params
+    region: us-east-1
+    output_location: s3://bucket/path
+    workgroup: primary
+  Input:  # Input direction params
+    tables:
+      - name: dev_gold.fact_social_media_reaction_post
+        filter: |
+          WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+      - name: dev_gold.dim_post_details
+        filter: |
+          WHERE updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+    query: |
+      WITH 
+      {% for table in tables %}
+      {{ table.name }}_data AS (
+        SELECT * FROM {{ table.name }}
+        {% if table.filter %}
+        {{ table.filter }}
+        {% endif %}
+      ),
+      {% endfor %}
+      joined_data AS (
+        SELECT *
+        FROM {% for table in tables %}
+          {{ table.name }}_data
+          {% if not loop.last %}JOIN{% endif %}
+        {% endfor %}
+      )
+      SELECT * FROM joined_data
+  Output:  # Output direction params
+    database: analytics_db
+    table: enriched_social_media
+
+model:
+  type: sentiment
+  name: 420test69
+  direction: target  # Matches Direction.Output
+  parameters:
+    messages: 
+      - role: system 
+        content: |
+          You are a sentiment analysis expert. Analyze the given text and return:
+          1. A sentiment score between -1 (most negative) and 1 (most positive)
+          2. A sentiment label (one of: VERY_NEGATIVE, NEGATIVE, NEUTRAL, POSITIVE, VERY_POSITIVE)
+          Consider the context, tone, and any domain-specific language.
+          Return your answer in the following format:
+      - role: user
+        content: {{ message }}
+    fields:
+      - name: sentiment_score
+        type: float
+        description: Sentiment score between -1 (most negative) and 1 (most positive)
+      - name: sentiment_label
+        type: string
+        description: One of VERY_NEGATIVE, NEGATIVE, NEUTRAL, POSITIVE, VERY_POSITIVE
+
+provider:
+  type: azure
+  name: azure-gpt4o
+  parameters:
+    engine: gpt-4o-mini
+    version: 2024-02-15-preview
+    api_base: ${OPENAI_API_BASE}
+    api_key: ${OPENAI_API_KEY}

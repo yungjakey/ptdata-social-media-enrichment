@@ -1,36 +1,68 @@
-"""Type definitions for model building and validation."""
+"""Model and prompt builders."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+import json
+import logging
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import create_model
+
+from src.common.types import Base
+
+logger = logging.getLogger(__name__)
 
 
-class Base(BaseModel):
-    """Base model with prompt generation and key validation."""
+class ModelBuilder:
+    """Dynamic model builder."""
 
-    _BASE_PROMPT: ClassVar[str] = "{0}"
-    primary_keys: list[str] = Field(default_factory=list, min_length=1)
+    def __init__(self, name: str = "DynamicModel"):
+        self.name = name
+        self.fields: dict[str, tuple[type, type]] = {}
+        self._base: type[Base] = Base
+        self._model_doc: str | None = None
 
-    def __init__(self, **kwargs: type) -> None:
-        if "primary_keys" not in kwargs:
-            raise ValueError("primary_keys is required") from None
+        logger.debug(f"Initialized Builder for model: {self.name}")
 
-        missing = set(kwargs["primary_keys"]) - set(kwargs.keys())
-        if missing:
-            raise ValueError(f"Missing primary keys: {missing}") from None
+    def with_field(
+        self, name: str, field_type: type | ModelBuilder, default: type = ...
+    ) -> ModelBuilder:
+        """Add field to schema."""
+        logger.debug(f"Adding field {name} with type {field_type}")
 
-        super().__init__(**kwargs)
+        if isinstance(field_type, ModelBuilder):
+            field_type = field_type.build()
 
-    @classmethod
-    def _prompt(cls, data: dict[str, type] | str) -> str:
-        """Generate prompt string from data."""
-        return str(data)
+        self.fields[name] = (field_type, default)
+        return self
 
-    @classmethod
-    def prompt(cls, **kwargs: type) -> str:
-        """Generate prompt from data."""
-        return cls._BASE_PROMPT.format(**kwargs)
+    def from_schema(self, schema: dict[str, type]) -> ModelBuilder:
+        """Build schema from dictionary."""
+        logger.info(f"Building model from schema: {json.dumps(schema, indent=4)}")
 
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+        for field_name, field_spec in schema.items():
+            if isinstance(field_spec, dict):
+                nested = ModelBuilder(field_name.title()).from_schema(field_spec)
+                self.with_field(field_name, nested)
+            else:
+                field_type = field_spec if isinstance(field_spec, type) else type(field_spec)
+                self.with_field(field_name, field_type)
+
+        return self
+
+    def with_prompt(self, prompt_template: str) -> ModelBuilder:
+        """Set prompt template as model's documentation."""
+        self._model_doc = prompt_template
+        return self
+
+    def build(self) -> type[Base]:
+        """Build and return the Pydantic model."""
+        model = create_model(
+            self.name,
+            __base__=self._base,
+            __module__=self._base.__module__,
+            __doc__=self._model_doc,
+            **self.fields,
+        )
+
+        logger.info(f"Built model: {model} with fields: {json.dumps(self.fields)}")
+        return model

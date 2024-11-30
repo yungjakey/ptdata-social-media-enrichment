@@ -1,5 +1,7 @@
-"""Models package for social media analytics."""
+"""Common package for social media analytics."""
 
-from .builder import Builder
+from .builder import ModelBuilder
 
-__all__ = ["Builder"]
+__all__ = [
+    "ModelBui1lder",
+]
