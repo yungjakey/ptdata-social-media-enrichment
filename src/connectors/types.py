@@ -1,67 +1,83 @@
-from __future__ import annotations
+"""Base connector types and configuration."""
 
-import abc
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
-
-from src.common.types import BaseConfig
+from typing import Any, Protocol, TypeVar
 
 
-class Directions(Enum):
-    """Source and sink enum."""
+class ConnectorType(str, Enum):
+    """Supported connector types."""
 
-    Input = "source"
-    Output = "target"
-
-
-@dataclass(frozen=True)
-class TableConfig(BaseConfig):
-    """Configuration for a single table connection."""
-
-    database: str
-    query: str
-
-    @classmethod
-    def from_config(cls, database: str, query: str) -> TableConfig:
-        return cls(database=database, query=query)
-
-
-class ConnectorProtocol(abc.ABC):
-    """Protocol for connector configurations."""
-
-    @abc.abstractmethod
-    def validate(self) -> bool:
-        """Validate connector configuration."""
-        pass
-
-    @abc.abstractmethod
-    def connect(self) -> Any:
-        """Establish connection to the data source."""
-        pass
-
-    @abc.abstractmethod
-    def disconnect(self) -> None:
-        """Close the connection to the data source."""
-        pass
+    ATHENA = "athena"
 
 
 @dataclass
-class ConnectorConfig(BaseConfig):
-    """Configuration for database connections."""
+class ConnectorConfig:
+    """Base connector configuration."""
 
-    direction: Directions
+    type: ConnectorType
     name: str
-    database: str
-    tables: list[TableConfig]
-    query: str | None = None
+    params: dict[str, Any]
+
+
+class ConnectorProtocol(Protocol):
+    """Base connector protocol."""
+
+    type: ConnectorType
+    name: str
+    params: dict[str, Any]
 
     def validate(self) -> None:
         """Validate connector configuration."""
-        super().validate()
-        if not self.name:
-            raise ValueError("Name must be specified")
-        if not self.database:
-            raise ValueError("Database must be specified")
-        if not self.tables:
-            raise ValueError("At least one table must be specified")
+        ...
+
+    def connect(self) -> None:
+        """Connect to the data source."""
+        ...
+
+    def disconnect(self) -> None:
+        """Disconnect from the data source."""
+        ...
+
+    async def read(self) -> Any:
+        """Read data from the data source."""
+        ...
+
+    async def write(self, records: Any) -> None:
+        """Write data to the data source."""
+        ...
+
+
+T = TypeVar("T", bound=ConnectorProtocol)
+
+
+class Connector:
+    """Base connector class."""
+
+    _registry: dict[ConnectorType, type[ConnectorProtocol]] = {}
+
+    @classmethod
+    def register(cls, connector_type: ConnectorType) -> Any:
+        """Register a connector type."""
+
+        def wrapper(connector_cls: type[T]) -> type[T]:
+            cls._registry[connector_type] = connector_cls
+            return connector_cls
+
+        return wrapper
+
+    @classmethod
+    def from_config(cls, type: str, name: str, params: dict[str, Any]) -> ConnectorProtocol:
+        """Create a connector from configuration."""
+        try:
+            connector_type = ConnectorType(type)
+        except ValueError as e:
+            raise ValueError(f"Unsupported connector type: {type}") from e
+
+        if connector_type not in cls._registry:
+            raise ValueError(f"No connector registered for type: {type}")
+
+        config = ConnectorConfig(type=connector_type, name=name, params=params)
+
+        connector_cls = cls._registry[connector_type]
+        return connector_cls(config)

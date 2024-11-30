@@ -65,7 +65,7 @@ class OpenAIConfig(BaseModel):
         return v
 
     @classmethod
-    def from_config(
+    def from_dict(
         cls, api_key: str, api_base: str, api_version: str, engine: str, **kwargs: Any
     ) -> OpenAIConfig:
         """Create"""

@@ -7,11 +7,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
-
-from src.connectors.builder import ConnectorBuilder
-from src.models.builder import ModelBuilder
-from src.providers.builder import ProviderBuilder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,17 +35,14 @@ async def process_records(
 
 async def main():
     """Run the AWS/Azure workflow."""
-    # Load environment variables
-    load_dotenv()
-
     # Load configuration
     with open(os.path.join(os.path.dirname(__file__), "config.yaml")) as f:
         config = yaml.safe_load(f)
 
     # Setup components from config
-    connector = ConnectorBuilder.from_config(config["connector"])
-    model = ModelBuilder.from_config(config["model"])
-    provider = ProviderBuilder.from_config(config["provider"])
+    connector = ConnectorBuilder.from_dict(config["connector"])
+    model = ModelBuilder.from_dict(config["model"])
+    provider = ProviderBuilder.from_dict(config["provider"])
 
     try:
         # Read records

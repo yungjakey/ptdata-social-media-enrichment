@@ -1,13 +1,11 @@
-"""Model and prompt builders."""
+"""Dynamic model builder."""
 
 from __future__ import annotations
 
 import json
 import logging
 
-from pydantic import create_model
-
-from src.common.types import Base
+from pydantic import BaseModel, create_model
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +16,7 @@ class ModelBuilder:
     def __init__(self, name: str = "DynamicModel"):
         self.name = name
         self.fields: dict[str, tuple[type, type]] = {}
-        self._base: type[Base] = Base
+        self._base: type[BaseModel] = BaseModel
         self._model_doc: str | None = None
 
         logger.debug(f"Initialized Builder for model: {self.name}")
@@ -54,7 +52,7 @@ class ModelBuilder:
         self._model_doc = prompt_template
         return self
 
-    def build(self) -> type[Base]:
+    def build(self) -> type[BaseModel]:
         """Build and return the Pydantic model."""
         model = create_model(
             self.name,

@@ -1,7 +1,5 @@
-from enum import Enum, auto
+"""Connector module initialization."""
 
+from src.connectors.types import ConnectorType
 
-class ConnectorType(Enum):
-    """Enumeration of supported connectors."""
-
-    Athena = auto()
+__all__ = ["ConnectorType"]
