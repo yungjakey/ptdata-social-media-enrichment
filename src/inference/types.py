@@ -4,7 +4,7 @@ import logging
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -56,19 +56,19 @@ class OpenAIConfig(BaseModel):
     )
     timeout: int = Field(default=10, gt=0, description="Request timeout in seconds")
 
-    @field_validator("api_key", "api_base")
-    @classmethod
-    def validate_required_fields(cls, v: str, field: Any) -> str:
+    @model_validator(mode="after")
+    def validate_required_fields(self) -> OpenAIConfig:
         """Validate required fields are not empty."""
-        if not v:
-            raise ValueError(f"{field.name} cannot be empty")
-        return v
+        for field_name in ["api_key", "api_base"]:
+            if not getattr(self, field_name):
+                raise ValueError(f"{field_name} cannot be empty")
+        return self
 
     @classmethod
     def from_dict(
         cls, api_key: str, api_base: str, api_version: str, engine: str, **kwargs: Any
     ) -> OpenAIConfig:
-        """Create"""
+        """Create config from dictionary."""
         try:
             return cls(
                 api_key=api_key,

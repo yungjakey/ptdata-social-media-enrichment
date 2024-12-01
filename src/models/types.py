@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from pydantic import BaseModel, create_model
@@ -25,7 +24,9 @@ class ModelBuilder:
         self, name: str, field_type: type | ModelBuilder, default: type = ...
     ) -> ModelBuilder:
         """Add field to schema."""
-        logger.debug(f"Adding field {name} with type {field_type}")
+        logger.debug(
+            f"Adding field {name} with type {field_type.__name__ if isinstance(field_type, type) else field_type.name}"
+        )
 
         if isinstance(field_type, ModelBuilder):
             field_type = field_type.build()
@@ -35,7 +36,7 @@ class ModelBuilder:
 
     def from_schema(self, schema: dict[str, type]) -> ModelBuilder:
         """Build schema from dictionary."""
-        logger.info(f"Building model from schema: {json.dumps(schema, indent=4)}")
+        logger.info(f"Building model from schema with fields: {list(schema.keys())}")
 
         for field_name, field_spec in schema.items():
             if isinstance(field_spec, dict):
@@ -62,5 +63,5 @@ class ModelBuilder:
             **self.fields,
         )
 
-        logger.info(f"Built model: {model} with fields: {json.dumps(self.fields)}")
+        logger.info(f"Built model: {model.__name__} with fields: {list(self.fields.keys())}")
         return model

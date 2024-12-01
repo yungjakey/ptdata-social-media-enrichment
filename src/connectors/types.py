@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, TypeVar
 
+from typing_extensions import runtime_checkable
+
 
 class ConnectorType(str, Enum):
     """Supported connector types."""
@@ -20,6 +22,7 @@ class ConnectorConfig:
     params: dict[str, Any]
 
 
+@runtime_checkable
 class ConnectorProtocol(Protocol):
     """Base connector protocol."""
 

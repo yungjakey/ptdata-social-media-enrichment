@@ -45,18 +45,17 @@ Connection:
   Output:
     type: athena  # Maps to ConnectorType
     name: social-media
-    database: dev_gold
-    region: europe-central-1
-    output_location: 's3://aws-orf-social-media-analytics/dev/gold'
-    workgroup: primary
     params:
       database: dev_test
+      region: europe-central-1
+      output_location: 's3://aws-orf-social-media-analytics/{Connection.Output.params.database}.replace("_", "/")'
+      workgroup: primary
       tables: 
         - name: dim_{Connection.Output.name}_{Model.name}
         - name: fact_{Connection.Output.name}_{Model.name}
       query: |
-        {% for table in Connection.Output.tables %}
-        INSERT INTO {{ Connection.Output.database }}.{{ table.name }}
+        {% for table in Connection.Output.params.tables %}
+        INSERT INTO {{ Connection.Output.params.database }}.{{ table.name }}
         {% endfor %}
 
 
