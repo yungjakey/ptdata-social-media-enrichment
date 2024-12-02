@@ -3,33 +3,15 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.connectors.types import ConnectorConfig
+
 logger = logging.getLogger(__name__)
-
-
-class QueryState(Enum):
-    """Enumeration of possible Athena query states."""
-
-    QUEUED = auto()
-    RUNNING = auto()
-    SUCCEEDED = auto()
-    FAILED = auto()
-    CANCELLED = auto()
-
-    @classmethod
-    def terminal_states(cls):
-        """Return terminal states."""
-        return {cls.SUCCEEDED, cls.FAILED, cls.CANCELLED}
-
-    @classmethod
-    def running_states(cls):
-        """Return running states."""
-        return {cls.QUEUED, cls.RUNNING}
 
 
 class QueryExecutionError(Exception):
@@ -62,49 +44,40 @@ class MalformedResponseError(Exception):
         super().__init__(f"AWS response missing required field: {missing_field}")
 
 
+class QueryState(Enum):
+    """Enumeration of possible Athena query states."""
+
+    QUEUED = auto()
+    RUNNING = auto()
+    SUCCEEDED = auto()
+    FAILED = auto()
+    CANCELLED = auto()
+
+    @classmethod
+    def terminal_states(cls):
+        """Return terminal states."""
+        return {cls.SUCCEEDED, cls.FAILED, cls.CANCELLED}
+
+    @classmethod
+    def running_states(cls):
+        """Return running states."""
+        return {cls.QUEUED, cls.RUNNING}
+
+
 class Region(str, Enum):
     """AWS regions."""
 
     EU_CENTRAL_1 = "eu-central-1"
 
 
-@dataclass
-class TableConfig:
-    """Athena table configuration."""
-
-    name: str
-    filter: str | None = None
-
-
-class AWSClientConfig(BaseModel):
-    """AWS client configuration."""
-
-    database: str
-    region: str
-    output_location: str
-    workgroup: str
-
-    @field_validator("output_location")
-    @classmethod
-    def validate_s3_location(cls, v: str) -> str:
-        """Validate S3 location."""
-        location = urlparse(v)
-        if location.scheme != "s3":
-            raise ValueError(f"Invalid S3 location: {v}")
-        if not location.netloc:
-            raise ValueError(f"Invalid S3 location: {v}")
-        return v
-
-
 class AWSParams(BaseModel):
     """AWS connection parameters."""
 
     database: str = Field(..., min_length=1)
-    region: Region
-    output_location: str
-    workgroup: str = Field(..., min_length=1)
-    tables: list[TableConfig] = Field(default_factory=list)
-    query: str | None = None
+    query: str = Field(..., min_length=1)
+    output_location: str = Field(default="s3://", description="S3 location for output")
+    workgroup: str = Field(default="default", min_length=1)
+    region: Region = Field(default=Region.EU_CENTRAL_1, description="AWS region")
     wait_time: int = Field(default=10, gt=0, description="Wait time in seconds")
     max_retries: int = Field(default=3, gt=0, description="Max retries")
     max_wait_time: int = Field(default=60, gt=0, description="Max wait time in seconds")
@@ -126,11 +99,24 @@ class AWSParams(BaseModel):
             raise ValueError(f"Invalid S3 location '{v}'") from e
 
     @classmethod
-    def from_dict(cls, params: dict) -> AWSParams:
+    def from_dict(cls, database: str, query: str, **kwargs) -> AWSParams:
         """Create instance from dict config."""
-        if "tables" in params and isinstance(params["tables"], list):
-            params["tables"] = [
-                TableConfig(**table) if isinstance(table, dict) else table
-                for table in params["tables"]
-            ]
-        return cls(**params)
+        return cls(database=database, query=query, **kwargs)
+
+
+class AWSClientConfig(ConnectorConfig):
+    """AWS client configuration."""
+
+    name: str
+    params: AWSParams
+    type: str = "aws"
+
+    @classmethod
+    def from_dict(cls, type: str, name: str, params: dict[str, Any]) -> AWSClientConfig:
+        """Create an instance from explicit configuration parameters."""
+        try:
+            aws_params = AWSParams.from_dict(**params)
+        except Exception as e:
+            raise ValueError(f"Invalid AWS parameters: {e}") from e
+
+        return cls(type=type, name=name, params=aws_params)

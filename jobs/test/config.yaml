@@ -55,7 +55,7 @@ Connection:
         - name: fact_{Connection.Output.name}_{Model.name}
       query: |
         {% for table in Connection.Output.params.tables %}
-        INSERT INTO {{ Connection.Output.params.database }}.{{ table.name }}
+        CREATE TABLE IF NOT EXISTS {{ Connection.Output.params.database }}.{{ table.name }}
         {% endfor %}
 
 

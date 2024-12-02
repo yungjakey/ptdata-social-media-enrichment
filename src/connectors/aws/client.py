@@ -3,25 +3,25 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime
+from itertools import zip_longest
 from typing import Any
 from urllib.parse import urlparse
 
 import aioboto3
-import pyarrow as pa
-import pyarrow.parquet as pq
 from botocore.exceptions import ClientError
-from pydantic import BaseModel
+from pyarrow import parquet as pq
+from pydantic import BaseModel, ValidationError
 
+from src.common.types import TypeConverter
 from src.connectors.aws.types import (
+    AWSClientConfig,
     MalformedResponseError,
     NotConnectedError,
     QueryExecutionError,
     QueryState,
-    S3LocationError,
 )
 from src.connectors.types import ConnectorConfig
 
@@ -33,29 +33,14 @@ class AWSClient(ConnectorConfig):
 
     POLL_INTERVAL = 1.0  # seconds
 
-    _PY2ATHENA = {
-        str: "string",
-        int: "int",
-        float: "double",
-        bool: "boolean",
-        datetime: "timestamp",
-    }
-    _ATHENA2ARROW = {
-        "string": pa.string(),
-        "boolean": pa.bool_(),
-        "double": pa.float64(),
-        "int": pa.int64(),
-        "binary": pa.binary(),
-    }
-
-    def __init__(self, config: ConnectorConfig) -> None:
+    def __init__(self, config: dict[str, Any]) -> None:
         """Initialize AWS client."""
-        from src.connectors.aws.types import AWSParams
+        # Validate config type and convert to AWSClientConfig
+        if not isinstance(config, dict):
+            raise ValueError("Config must be a dictionary")
 
-        self.type = config.type
-        self.name = config.name
-        self.params = AWSParams(**config.params)
-        self._session: aioboto3.Session | None = None
+        self.config = AWSClientConfig.from_dict(**config)
+        self._session = None
         self._athena = None
         self._glue = None
         self._s3 = None
@@ -67,18 +52,18 @@ class AWSClient(ConnectorConfig):
 
         try:
             # Validate that the workgroup exists
-            response = await self._athena.get_work_group(WorkGroup=self.params.workgroup)
+            response = await self._athena.get_work_group(WorkGroup=self.config.params.workgroup)
             if not response.get("WorkGroup"):
-                raise ValueError(f"WorkGroup '{self.params.workgroup}' not found")
+                raise ValueError(f"WorkGroup '{self.config.params.workgroup}' not found")
         except ClientError as e:
             if e.response["Error"]["Code"] == "InvalidRequestException":
-                raise ValueError(f"WorkGroup '{self.params.workgroup}' not found") from e
+                raise ValueError(f"WorkGroup '{self.config.params.workgroup}' not found") from e
             raise
 
     async def connect(self) -> None:
         """Connect to AWS services."""
         if not self._session:
-            self._session = aioboto3.Session(region_name=self.params.region)
+            self._session = aioboto3.Session(region_name=self.config.params.region)
 
         # Explicitly await client creation and use
         athena_client = await self._session.client("athena")
@@ -94,8 +79,8 @@ class AWSClient(ConnectorConfig):
         await self.validate()
 
         # Validate S3 bucket
-        if self.params.output_location is not None:
-            await self._s3.head_bucket(Bucket=urlparse(self.params.output_location).netloc)
+        if self.config.params.output_location is not None:
+            await self._s3.head_bucket(Bucket=urlparse(self.config.params.output_location).netloc)
 
     async def disconnect(self) -> None:
         """Disconnect from AWS services."""
@@ -127,7 +112,28 @@ class AWSClient(ConnectorConfig):
         reason = status.get("StateChangeReason")
         return state, reason
 
-    async def _wait_for_query(self, query_id: str, timeout: float = 300.0) -> None:
+    async def _submit(self, query: str) -> str:
+        """Execute a query and return the execution ID."""
+        if not self._athena:
+            raise NotConnectedError("Not connected to AWS")
+
+        try:
+            response = await self._athena.start_query_execution(
+                QueryString=query,
+                QueryExecutionContext={"Database": self.config.params.database},
+                ResultConfiguration={"OutputLocation": self.config.params.output_location},
+                WorkGroup=self.config.params.workgroup,
+            )
+            query_execution_id = response.get("QueryExecutionId")
+            if not query_execution_id:
+                raise MalformedResponseError(response, "QueryExecutionId")
+
+            return query_execution_id
+        except ClientError as e:
+            logger.error("Failed to execute query: %s", e)
+            raise
+
+    async def _wait(self, query_id: str, timeout: float = 300.0) -> None:
         """
         Wait for query completion with a timeout."""
         max_iterations = int(timeout / self.POLL_INTERVAL)
@@ -146,163 +152,145 @@ class AWSClient(ConnectorConfig):
                 else:
                     raise QueryExecutionError(query_id, state, reason)
             elif state in QueryState.running_states():
+                logger.info(
+                    f"Query {query_id} is in state {state.name}. Sleeping for {self.POLL_INTERVAL} seconds."
+                )
                 await asyncio.sleep(self.POLL_INTERVAL)
-                logger.info(f"Query {query_id} is in state {state.name}")
 
         # If we've exhausted all iterations without reaching a terminal state
         raise TimeoutError(f"Query {query_id} did not complete within {timeout} seconds")
 
-    async def _execute_query(self, query: str) -> str:
-        """Execute a query and return the execution ID."""
-        if not self._athena:
-            raise NotConnectedError("Not connected to AWS")
+    def _get(self, query_id: str) -> list[dict[str, type]]:
+        """Process rows from Athena response into list of records."""
+        response = self._athena.get_query_results(QueryExecutionId=query_id)
 
-        try:
-            response = await self._athena.start_query_execution(
-                QueryString=query,
-                QueryExecutionContext={"Database": self.params.database},
-                ResultConfiguration={"OutputLocation": self.params.output_location},
-                WorkGroup=self.params.workgroup,
-            )
-            query_execution_id = response.get("QueryExecutionId")
-            if not query_execution_id:
-                raise MalformedResponseError(response, "QueryExecutionId")
-            return query_execution_id
-        except ClientError as e:
-            logger.error("Failed to execute query: %s", e)
-            raise
+        # Extract headers from first row if not done
+        rows = response.get("ResultSet", {}).result_set.get("Rows", [])
+        if not rows:
+            raise ValueError("ResultSet is empty")
 
-    def _get_s3_location(self, path: str) -> tuple[str, str]:
-        """Parse S3 location into bucket and key."""
-        location = urlparse(path)
-        if location.scheme != "s3":
-            raise S3LocationError(f"Invalid S3 location: {path}")
-        return location.netloc, location.path.lstrip("/")
+        headers = [
+            col.get("VarCharValue", f"column_{i}") for i, col in enumerate(rows[0].get("Data", []))
+        ]
+        rows = rows[1:] if len(rows) > 1 else []
 
-    def _get_schema(self, output_model: type[BaseModel]) -> dict[str, str]:
-        """Get schema from Pydantic model."""
-        schema = {}
-        for field_name, field in output_model.model_fields.items():
-            annotation = field.annotation
-            if annotation in self._PY2ATHENA:
-                schema[field_name] = self._PY2ATHENA[annotation]
-            else:
-                # Default to string if type not mapped
-                schema[field_name] = "string"
-                logger.warning(
-                    f"Field {field_name} has unmapped type {annotation}, defaulting to string"
-                )
-        return schema
+        records = []
+        for row in rows:
+            # Skip invalid rows
+            if not row or "Data" not in row:
+                logger.warning("Skipping invalid row: %s", row)
+                continue
 
-    def _records_to_table(self, records: list[dict[str, Any]], schema: dict[str, str]) -> pa.Table:
-        """Convert records to Arrow table."""
-        pa_schema = pa.schema(
-            [(name, self._ATHENA2ARROW.get(typ, pa.string())) for name, typ in schema.items()]
-        )
-        return pa.Table.from_pylist(records, schema=pa_schema)
+            # Create record with safe header-value mapping
+            record = {}
+            for header, cell in zip_longest(headers or [], row.get("Data", []), fillvalue=None):
+                # Handle missing headers or cells
+                if header is None or cell is None:
+                    continue
+
+                value = cell.get("VarCharValue", "")
+                record[header] = value.strip() if value else None
+
+            # Add non-empty records
+            if record:
+                records.append(record)
+
+        return records
 
     async def read(
         self,
-        query: str | None = None,
-        output_model: type[BaseModel] | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+        input_model: type[BaseModel],
+    ) -> AsyncIterator[BaseModel | dict[str, type]]:
         """Execute a query and yield results."""
         if not self._athena:
             raise NotConnectedError("Not connected to AWS")
 
-        # Use config query if no query is provided
-        if query is None:
-            query = self.params.query
-            if not query:
-                raise ValueError("No query specified in configuration or method call")
+        # submit query
+        query_id = await self._submit(self.config.params.query)
 
+        # await result
+        await self._wait(query_id, timeout=self.config.params.max_wait_time)
+
+        # validate and yield results
+        for record in self._get(query_id):
+            try:
+                yield input_model(**record)
+            except ValidationError as e:
+                logger.error(f"{e}: {record}")
+                continue
+
+    async def _write_to_s3(
+        self, records: AsyncIterator[BaseModel], output_model: type[BaseModel], output_dir: str
+    ):
+        """Write records to a table using CTAS with partitioning."""
+        # validate results
+        data = []
+        async for record in records:
+            if not isinstance(record, BaseModel):
+                logger.warning(f"Skipping non-model record: {record}")
+                continue
+            data.append(record.model_dump())
+
+        if not data:
+            logger.warning("No valid records to write")
+            return
+
+        # create pyarrow table
+        table = pq.Table.from_pandas(pd.DataFrame(data))
+
+        # write to s3
         try:
-            # Execute the query
-            query_id = await self._execute_query(query)
-            await self._wait_for_query(query_id)
-
-            # Pagination handling
-            next_token = None
-            while True:
-                # Get query results with optional next token
-                kwargs = {"QueryExecutionId": query_id}
-                if next_token:
-                    kwargs["NextToken"] = next_token
-
-                response = await self._athena.get_query_results(**kwargs)
-                rows = response.get("ResultSet", {}).get("Rows", [])
-
-                # Extract column names from the first row (only on first page)
-                if not next_token and len(rows) > 1:
-                    headers = [col.get("VarCharValue", "") for col in rows[0].get("Data", [])]
-                    rows = rows[1:]  # Skip header row on first page
-
-                # Process data rows
-                for row in rows:
-                    data = row.get("Data", [])
-                    if len(data) == len(headers):
-                        record = {
-                            headers[i]: data[i].get("VarCharValue", "") for i in range(len(headers))
-                        }
-                        # Convert value to int if possible
-                        if "value" in record:
-                            try:
-                                record["value"] = int(record["value"])
-                            except ValueError:
-                                pass
-                        yield record
-
-                # Check for more pages
-                next_token = response.get("NextToken")
-                if not next_token:
-                    break
-
+            await self._s3.put_object(
+                Bucket=urlparse(self.config.params.output_location).netloc,
+                Key=f"{output_dir}/data.parquet",
+                Body=table.to_buffer().tobytes(),
+            )
         except ClientError as e:
-            logger.error("Failed to get query results: %s", e)
-            raise
+            raise RuntimeError(f"Error writing to {output_dir}: {e}") from e
 
-    async def write(
-        self, records: list[dict[str, Any]], table_name: str, output_model: type[BaseModel]
-    ) -> None:
-        """Write data to Athena using S3."""
-        if not self._athena or not self._s3:
-            raise NotConnectedError("Not connected to AWS")
-
-        # Get schema from model
-        schema = self._get_schema(output_model)
-
-        try:
-            # Determine base S3 location for the table
-            base_s3_location = f"{self.params.output_location.rstrip('/')}/{table_name}"
-
-            # Create table if it doesn't exist
-            create_table = f"""
-            CREATE TABLE IF NOT EXISTS "{table_name}" (
+    async def _create_table(self, name: str, output_dir: str, schema: dict[str, str]) -> None:
+        create_table = f"""
+            CREATE TABLE IF NOT EXISTS "{self.config.params.database}.{name}" (
                 {', '.join(f'"{name}" {type_}' for name, type_ in schema.items())}
             )
+            PARTITIONED BY (year, month, day, hour)
             STORED AS PARQUET
-            LOCATION '{base_s3_location}/'
+            LOCATION '{output_dir}'
             """
-            query_id = await self._execute_query(create_table)
+
+        try:
+            query_id = await self._submit(create_table)
             await self._wait_for_query(query_id)
 
-            # Convert records to Arrow table
-            table = self._records_to_table(records, schema)
-
-            # Upload Parquet file
-            s3_key = f"{table_name}-{datetime.now():%s}.parquet"
-            with io.BytesIO() as buffer:
-                pq.write_table(table, buffer)
-                buffer.seek(0)
-                await self._s3.put_object(
-                    Bucket=self.params.output_location.split("/")[2],
-                    Key=f"{table_name}/{s3_key}",
-                    Body=buffer.getvalue(),
-                )
-
+            # Repair table to pick up new partition
+            repair_query = f'MSCK REPAIR TABLE "{self.config.params.database}.{name}"'
+            query_id = await self._submit(repair_query)
+            await self._wait_for_query(query_id)
         except ClientError as e:
-            logger.error("Failed to write data: %s", e)
-            raise
+            raise ClientError(f"Failed to create table {name}: {e}") from e
+
+    async def write(
+        self,
+        records: AsyncIterator[BaseModel],
+        output_model: type[BaseModel],
+        execution_time: datetime,
+    ) -> None:
+        """Write records to a table using CTAS with partitioning."""
+        if not self._s3 or not self._athena:
+            raise NotConnectedError("Not connected to AWS")
+
+        # get schema
+        schema = TypeConverter.py2athena(output_model)
+
+        # partition location
+        base_dir = urlparse(self.config.params.output_location).path
+        output_dir = f"{base_dir}/{execution_time:year=%Y/month=%m/day=%d/hour=%H}/model={output_model.__name__}"
+
+        # write to s
+        await self._write_to_s3(records, output_model, output_dir)
+
+        # create table
+        await self._create_table(output_model.__name__, output_dir, schema)
 
     def __enter__(self) -> AWSClient:
         """Enter sync context manager."""

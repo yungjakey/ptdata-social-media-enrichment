@@ -3,34 +3,52 @@
 import asyncio
 import logging
 import os
-from collections.abc import AsyncIterator
 from typing import Any
 
 import yaml
+from botocore.exceptions import ClientError
+from pydantic import BaseModel
+
+from src.connectors.types import Connector
+from src.inference.client import OpenAIClient
+from src.models.types import ModelBuilder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def process_records(
-    records: AsyncIterator[dict[str, Any]],
-    model: Any,
-    provider: Any,
-) -> AsyncIterator[dict[str, Any]]:
-    """Process records through model and provider."""
-    async for record in records:
-        # Process through model/provider
-        result = await provider.generate(
-            model=model,
-            input_data=record,
+async def process_batch(
+    records: list[dict[str, Any]],
+    model: BaseModel,
+    provider: OpenAIClient,
+) -> list[dict[str, Any]]:
+    """Process a batch of records through the model and provider."""
+    tasks = []
+    for record in records:
+        tasks.append(
+            provider.generate(
+                model=model,
+                input_data=record,
+            )
         )
 
-        # Merge with input record
-        yield {
-            **record,
-            **result,
-        }
+    results = []
+    try:
+        for result, record in zip(
+            await asyncio.gather(*tasks, return_exceptions=True),
+            records,
+            strict=False,
+        ):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to process record: {result}")
+                continue
+            results.append({**record, **result})
+    except Exception as e:
+        logger.error(f"Batch processing error: {e}")
+        raise
+
+    return results
 
 
 async def main():
@@ -40,17 +58,19 @@ async def main():
         config = yaml.safe_load(f)
 
     # Setup components from config
-    connector = ConnectorBuilder.from_dict(config["connector"])
-    model = ModelBuilder.from_dict(config["model"])
-    provider = ProviderBuilder.from_dict(config["provider"])
+    connector = Connector.from_config(**config["connector"])
+    model = ModelBuilder(config["model"]["name"]).from_schema(config["model"]["schema"]).build()
+    provider = OpenAIClient(config["provider"])
 
     try:
-        # Read records
-        source_records = await connector.read()
+        # Read and collect all records
+        records = []
+        async for record in connector.read():
+            records.append(record)
 
         # Process through Azure OpenAI
-        enriched_records = process_records(
-            records=source_records,
+        enriched_records = await process_batch(
+            records=records,
             model=model,
             provider=provider,
         )
@@ -58,6 +78,9 @@ async def main():
         # Write enriched records back
         await connector.write(enriched_records)
 
+    except ClientError as e:
+        logger.error(f"AWS operation failed: {e}")
+        raise
     except Exception as e:
         logger.error(f"Workflow failed: {e}")
         raise
