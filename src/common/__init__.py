@@ -1,3 +1,3 @@
-from .types import TypeConverter
+from .types import RootConfig
 
-__all__ = ["TypeConverter"]
+__all__ = ["RootConfig"]

@@ -1,20 +1,20 @@
 """Base connector types and configuration."""
 
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, TypeVar
 
 from typing_extensions import runtime_checkable
 
+from src.common import BaseConfig
+
 
 class ConnectorType(str, Enum):
     """Supported connector types."""
 
-    ATHENA = "athena"
+    AWS = "aws"
 
 
-@dataclass
-class ConnectorConfig:
+class ConnectorConfig(BaseConfig):
     """Base connector configuration."""
 
     type: ConnectorType

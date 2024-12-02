@@ -1,68 +1,48 @@
 
 Model:
-  type: sentiment
-  name: 420test69
-  prompt: |
-    You are a sentiment analysis expert. Analyze the given text and return:
-    1. A sentiment score between -1 (most negative) and 1 (most positive)
-    2. A sentiment label (one of: VERY_NEGATIVE, NEGATIVE, NEUTRAL, POSITIVE, VERY_POSITIVE)
-    Consider the context, tone, and any domain-specific language.
+  type: completion
+  name: sentiment
+  params:
+    prompt: |
+      You are a social media analytics expert. When analyzing social media content:
+      - Consider the informal nature of social media language, including slang and emojis
+      - Account for context and platform-specific communication styles
+      - Pay attention to user engagement patterns and trends
+      - Recognize sarcasm and irony where possible
+      - Consider the impact of viral or trending topics
+    schema:
+      sentiment_score: float
+      sentiment_label: str
+      confidence: float
 
+Input:
+  type: aws 
+  name: social-media
+  params:
+    database: dev_gold
+    query: |
+      SELECT p.*, r.*
+      FROM dev_gold.fact_social_media_reaction_post r
+      JOIN dev_gold.dim_post_details p
+      WHERE r.created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+      AND p.updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
 
-Connection:
-  Input:
-    type: athena 
-    name: social-media
-    params:
-      database: dev_gold
-      region: europe-central-1
-      workgroup: primary
-      tables:
-        - name: dev_gold.fact_social_media_reaction_post
-          filter: |
-            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-        - name: dev_gold.dim_post_details
-          filter: |
-            WHERE updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-      query: |
-        WITH 
-        {% for table in Connection.Input.tables %}
-        {{ table.name }}_data AS (
-          SELECT * FROM  {{ Connection.Input.database }}.{{ table.name }}
-          {% if table.filter %}
-          {{ table.filter }}
-          {% endif %}
-        ),
-        {% endfor %}
-        joined_data AS (
-          SELECT *
-          FROM {% for table in Connection.Input.tables %}
-            {{ Connection.Input.database }}.{{ table.name }}_data
-            {% if not loop.last %}JOIN{% endif %}
-          {% endfor %}
-        )
-        SELECT * FROM joined_data
-  Output:
-    type: athena  # Maps to ConnectorType
-    name: social-media
-    params:
-      database: dev_test
-      region: europe-central-1
-      output_location: 's3://aws-orf-social-media-analytics/{Connection.Output.params.database}.replace("_", "/")'
-      workgroup: primary
-      tables: 
-        - name: dim_{Connection.Output.name}_{Model.name}
-        - name: fact_{Connection.Output.name}_{Model.name}
-      query: |
-        {% for table in Connection.Output.params.tables %}
-        CREATE TABLE IF NOT EXISTS {{ Connection.Output.params.database }}.{{ table.name }}
-        {% endfor %}
-
+Output:
+  type: aws
+  name: social-media
+  params:
+    database: dev_test
+    query: |
+      CREATE TABLE IF NOT EXISTS dev_test.dim_social_media_420test69
+      AS SELECT * FROM source_data;
+      
+      CREATE TABLE IF NOT EXISTS dev_test.fact_social_media_420test69
+      AS SELECT * FROM results_data;
 
 Provider:
   type: azure
   name: azure-gpt4o
-  parameters:
+  params:
     engine: gpt-4o-mini
     version: 2024-02-15-preview
     api_base: ${OPENAI_API_BASE}

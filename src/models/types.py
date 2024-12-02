@@ -4,9 +4,34 @@ from __future__ import annotations
 
 import logging
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
+
+from src.common import BaseConfig
 
 logger = logging.getLogger(__name__)
+
+
+class ModelParams(BaseConfig):
+    """Model parameters."""
+
+    prompt: str = Field(..., min_length=1, description="Prompt template")
+    schema: dict[str, type] = Field(..., description="Model schema")
+
+
+class ModelConfig(BaseConfig):
+    """Model parameters."""
+
+    name: str
+    params: ModelParams
+    type: str = "inference"
+
+    @classmethod
+    def from_dict(cls, name: str, params: dict[str, type]):
+        try:
+            params = ModelParams.from_dict(**params)
+        except Exception as e:
+            raise ValueError(f"Invalid model parameters: {e}") from e
+        return cls(name=name, params=params)
 
 
 class ModelBuilder:
@@ -20,8 +45,9 @@ class ModelBuilder:
 
         logger.debug(f"Initialized Builder for model: {self.name}")
 
+    @classmethod
     def with_field(
-        self, name: str, field_type: type | ModelBuilder, default: type = ...
+        cls, name: str, field_type: type | ModelBuilder, default: type = ...
     ) -> ModelBuilder:
         """Add field to schema."""
         logger.debug(
@@ -31,27 +57,38 @@ class ModelBuilder:
         if isinstance(field_type, ModelBuilder):
             field_type = field_type.build()
 
-        self.fields[name] = (field_type, default)
-        return self
+        cls.fields[name] = (field_type, default)
+        return cls
 
-    def from_schema(self, schema: dict[str, type]) -> ModelBuilder:
+    @classmethod
+    def from_schema(cls, schema: dict[str, type]) -> ModelBuilder:
         """Build schema from dictionary."""
         logger.info(f"Building model from schema with fields: {list(schema.keys())}")
 
         for field_name, field_spec in schema.items():
             if isinstance(field_spec, dict):
-                nested = ModelBuilder(field_name.title()).from_schema(field_spec)
-                self.with_field(field_name, nested)
+                nested = cls(field_name.title()).from_schema(field_spec)
+                cls.with_field(field_name, nested)
             else:
                 field_type = field_spec if isinstance(field_spec, type) else type(field_spec)
-                self.with_field(field_name, field_type)
+                cls.with_field(field_name, field_type)
 
-        return self
+        return cls
 
-    def with_prompt(self, prompt_template: str) -> ModelBuilder:
+    @classmethod
+    def with_prompt(cls, prompt_template: str) -> ModelBuilder:
         """Set prompt template as model's documentation."""
-        self._model_doc = prompt_template
-        return self
+        cls._model_doc = prompt_template
+        return cls
+
+    @classmethod
+    def from_config(cls, dict_config: dict[str, type]) -> ModelBuilder:
+        try:
+            config = ModelConfig.from_dict(**dict_config)
+        except Exception as e:
+            raise ValueError(f"Invalid model configuration: {e}") from e
+
+        return cls.from_schema(config.params.schema).with_prompt(config.params.prompt)
 
     def build(self) -> type[BaseModel]:
         """Build and return the Pydantic model."""

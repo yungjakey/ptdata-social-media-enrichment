@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.common import BaseConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,12 +32,9 @@ class ModelName(str, Enum):
         }[self]
 
 
-class OpenAIConfig(BaseModel):
-    """Configuration for Azure OpenAI services."""
-
-    type: str = "azure"
-    api_key: str = Field(..., description="Azure OpenAI API key")
-    api_base: str = Field(..., description="Azure OpenAI API base URL")
+class OpenAIParams(BaseConfig):
+    api_key: str = Field(..., min_length=1, description="Azure OpenAI base URL")
+    api_base: str = Field(..., min_length=1, description="Azure OpenAI base URL")
     api_version: APIVersion = Field(
         default=APIVersion.V2024_10_01, description="Azure OpenAI API version"
     )
@@ -56,13 +55,27 @@ class OpenAIConfig(BaseModel):
     )
     timeout: int = Field(default=10, gt=0, description="Request timeout in seconds")
 
-    @model_validator(mode="after")
-    def validate_required_fields(self) -> OpenAIConfig:
-        """Validate required fields are not empty."""
-        for field_name in ["api_key", "api_base"]:
-            if not getattr(self, field_name):
-                raise ValueError(f"{field_name} cannot be empty")
-        return self
+    # validate api key and base
+    @model_validator(after=True)
+    def validate_api_key_and_base(cls, values):
+        api_key = values.get("api_key")
+        api_base = values.get("api_base")
+        if not api_key.startswith("sk-") and not api_key.startswith("azopenai://"):
+            raise ValueError("Invalid OpenAI API key")
+        if not api_base.startswith("https://") and not api_base.startswith("azopenai://"):
+            raise ValueError("Invalid OpenAI API base")
+        return values
+
+    @classmethod
+    def from_dict(cls, api_key: str, api_base: str, **kwargs):
+        return cls(api_key=api_key, api_base=api_base, **kwargs)
+
+
+class OpenAIConfig(BaseConfig):
+    """Configuration for Azure OpenAI services."""
+
+    params: OpenAIParams = Field(default_factory=OpenAIParams)
+    type: str = "azure"
 
     @classmethod
     def from_dict(
@@ -70,12 +83,8 @@ class OpenAIConfig(BaseModel):
     ) -> OpenAIConfig:
         """Create config from dictionary."""
         try:
-            return cls(
-                api_key=api_key,
-                api_base=api_base,
-                api_version=APIVersion(api_version),
-                engine=ModelName(engine),
-                **kwargs,
-            )
-        except ValueError as e:
-            raise ValueError(f"Invalid configuration: {e}") from e
+            azure_params = OpenAIParams.from_dict(**kwargs)
+        except Exception as e:
+            raise ValueError(f"Invalid OpenAI parameters: {e}") from e
+
+        return cls(api_key=api_key, api_base=api_base, params=azure_params)

@@ -7,8 +7,9 @@ from enum import Enum, auto
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
+from src.common.types import BaseConfig
 from src.connectors.types import ConnectorConfig
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,13 @@ class Region(str, Enum):
     EU_CENTRAL_1 = "eu-central-1"
 
 
-class AWSParams(BaseModel):
+class AWSParams(BaseConfig):
     """AWS connection parameters."""
 
-    database: str = Field(..., min_length=1)
-    query: str = Field(..., min_length=1)
-    output_location: str = Field(default="s3://", description="S3 location for output")
-    workgroup: str = Field(default="default", min_length=1)
+    database: str = Field(..., min_length=1, description="Database name")
+    query: str = Field(..., min_length=1, description="Query string")
+    output_location: str = Field(..., description="S3 location for output")
+    workgroup: str = Field(default="primary", min_length=1)
     region: Region = Field(default=Region.EU_CENTRAL_1, description="AWS region")
     wait_time: int = Field(default=10, gt=0, description="Wait time in seconds")
     max_retries: int = Field(default=3, gt=0, description="Max retries")
@@ -86,6 +87,8 @@ class AWSParams(BaseModel):
     @classmethod
     def validate_s3_location(cls, v: str) -> str:
         """Validate S3 location."""
+        if not v:
+            v = f"s3://aws-orf-social-media-analytics/{cls.database.replace('_', '/')}"
         try:
             location = urlparse(v)
             if location.scheme != "s3":

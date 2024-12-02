@@ -2,6 +2,4 @@
 
 from .types import ModelBuilder
 
-__all__ = [
-    "ModelBuilder",
-]
+__all__ = ["ModelBuilder"]

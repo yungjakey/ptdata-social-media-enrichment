@@ -1,7 +1,13 @@
-from typing import Union
+from dataclasses import dataclass
+from typing import NamedTuple, Union
 
 from dateitime import date, datetime
 from pydantic import BaseModel
+
+
+class Direction(NamedTuple):
+    Input: str
+    Output: str
 
 
 class TypeConverter:
@@ -62,3 +68,21 @@ class TypeConverter:
                 schema[name] = cls._py2athena(annotation)
 
         return schema
+
+
+class BaseConfig(BaseModel):
+    type: str
+    name: str
+    params: dict[str, type]
+
+
+@dataclass(frozen=True)
+class RootConfig:
+    Model: type[BaseConfig]
+    Input: type[BaseConfig]
+    Output: type[BaseConfig]
+    Provider: type[BaseConfig]
+
+    @classmethod
+    def from_dict(cls, kwargs: dict[str, dict[str, type]]):
+        return cls(**kwargs)

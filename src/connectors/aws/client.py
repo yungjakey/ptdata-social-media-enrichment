@@ -197,29 +197,7 @@ class AWSClient(ConnectorConfig):
 
         return records
 
-    async def read(
-        self,
-        input_model: type[BaseModel],
-    ) -> AsyncIterator[BaseModel | dict[str, type]]:
-        """Execute a query and yield results."""
-        if not self._athena:
-            raise NotConnectedError("Not connected to AWS")
-
-        # submit query
-        query_id = await self._submit(self.config.params.query)
-
-        # await result
-        await self._wait(query_id, timeout=self.config.params.max_wait_time)
-
-        # validate and yield results
-        for record in self._get(query_id):
-            try:
-                yield input_model(**record)
-            except ValidationError as e:
-                logger.error(f"{e}: {record}")
-                continue
-
-    async def _write_to_s3(
+    async def _write(
         self, records: AsyncIterator[BaseModel], output_model: type[BaseModel], output_dir: str
     ):
         """Write records to a table using CTAS with partitioning."""
@@ -248,7 +226,7 @@ class AWSClient(ConnectorConfig):
         except ClientError as e:
             raise RuntimeError(f"Error writing to {output_dir}: {e}") from e
 
-    async def _create_table(self, name: str, output_dir: str, schema: dict[str, str]) -> None:
+    async def _create(self, name: str, output_dir: str, schema: dict[str, str]) -> None:
         create_table = f"""
             CREATE TABLE IF NOT EXISTS "{self.config.params.database}.{name}" (
                 {', '.join(f'"{name}" {type_}' for name, type_ in schema.items())}
@@ -269,6 +247,28 @@ class AWSClient(ConnectorConfig):
         except ClientError as e:
             raise ClientError(f"Failed to create table {name}: {e}") from e
 
+    async def read(
+        self,
+        input_model: type[BaseModel],
+    ) -> AsyncIterator[BaseModel | dict[str, type]]:
+        """Execute a query and yield results."""
+        if not self._athena:
+            raise NotConnectedError("Not connected to AWS")
+
+        # submit query
+        query_id = await self._submit(self.config.params.query)
+
+        # await result
+        await self._wait(query_id, timeout=self.config.params.max_wait_time)
+
+        # validate and yield results
+        for record in self._get(query_id):
+            try:
+                yield input_model(**record)
+            except ValidationError as e:
+                logger.error(f"{e}: {record}")
+                continue
+
     async def write(
         self,
         records: AsyncIterator[BaseModel],
@@ -287,10 +287,10 @@ class AWSClient(ConnectorConfig):
         output_dir = f"{base_dir}/{execution_time:year=%Y/month=%m/day=%d/hour=%H}/model={output_model.__name__}"
 
         # write to s
-        await self._write_to_s3(records, output_model, output_dir)
+        await self._write(records, output_model, output_dir)
 
         # create table
-        await self._create_table(output_model.__name__, output_dir, schema)
+        await self._create(output_model.__name__, output_dir, schema)
 
     def __enter__(self) -> AWSClient:
         """Enter sync context manager."""
