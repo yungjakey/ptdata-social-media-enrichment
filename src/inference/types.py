@@ -1,27 +1,26 @@
+"""Inference types."""
+
 from __future__ import annotations
 
-import logging
 from enum import Enum
-from typing import Any
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, model_validator
-
-from src.common import BaseConfig
-
-logger = logging.getLogger(__name__)
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class APIVersion(str, Enum):
     """Azure OpenAI API versions."""
 
-    V2024_10_01 = "2024-10-01-preview"
+    FEB_PREVIEW = "2024-02-15-preview"
+    DEFAULT = FEB_PREVIEW
 
 
 class ModelName(str, Enum):
     """Available OpenAI models."""
 
-    GPT4 = "gpt-4"
     GPT4O_MINI = "gpt-4o-mini"
+    GPT4 = "gpt-4"
+    DEFAULT = GPT4O_MINI
 
     @property
     def max_tokens(self) -> int:
@@ -32,59 +31,119 @@ class ModelName(str, Enum):
         }[self]
 
 
-class OpenAIParams(BaseConfig):
-    api_key: str = Field(..., min_length=1, description="Azure OpenAI base URL")
-    api_base: str = Field(..., min_length=1, description="Azure OpenAI base URL")
-    api_version: APIVersion = Field(
-        default=APIVersion.V2024_10_01, description="Azure OpenAI API version"
+class InferenceParams(BaseModel):
+    """Azure OpenAI parameters."""
+
+    engine: ModelName = Field(
+        default=ModelName.DEFAULT,
+        description="Model engine name",
     )
-    engine: ModelName = Field(..., description="Azure OpenAI model name")
-    max_workers: int = Field(default=5, gt=0, description="Maximum number of concurrent workers")
-    temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Sampling temperature")
-    max_tokens: int | None = Field(default=None, description="Maximum number of tokens to generate")
-    top_p: float = Field(default=1.0, ge=0.0, le=1.0, description="Nucleus sampling parameter")
+    version: APIVersion = Field(
+        default=APIVersion.DEFAULT,
+        description="API version",
+    )
+    api_base: str = Field(
+        ...,
+        min_length=1,
+        description="API base URL",
+    )
+    api_key: str = Field(
+        ...,
+        min_length=1,
+        description="API key",
+    )
+    max_workers: int = Field(
+        default=5,
+        gt=0,
+        description="Maximum number of concurrent workers",
+    )
+    temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Sampling temperature",
+    )
+    max_tokens: int | None = Field(
+        default=None,
+        description="Maximum number of tokens to generate",
+    )
+    top_p: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Nucleus sampling parameter",
+    )
     presence_penalty: float = Field(
-        default=0.0, ge=-2.0, le=2.0, description="Presence penalty parameter"
+        default=0.0,
+        ge=-2.0,
+        le=2.0,
+        description="Presence penalty parameter",
     )
     frequency_penalty: float = Field(
-        default=0.0, ge=-2.0, le=2.0, description="Frequency penalty parameter"
+        default=0.0,
+        ge=-2.0,
+        le=2.0,
+        description="Frequency penalty parameter",
     )
-    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    stop: list[str] | None = Field(
+        default=None,
+        description="Stop sequences",
+    )
     response_format: BaseModel | None = Field(
-        default=None, description="Response format configuration"
+        default=None,
+        description="Response format configuration",
     )
-    timeout: int = Field(default=10, gt=0, description="Request timeout in seconds")
+    timeout: int = Field(
+        default=10,
+        gt=0,
+        description="Request timeout in seconds",
+    )
 
-    # validate api key and base
-    @model_validator(after=True)
-    def validate_api_key_and_base(cls, values):
-        api_key = values.get("api_key")
-        api_base = values.get("api_base")
-        if not api_key.startswith("sk-") and not api_key.startswith("azopenai://"):
-            raise ValueError("Invalid OpenAI API key")
-        if not api_base.startswith("https://") and not api_base.startswith("azopenai://"):
-            raise ValueError("Invalid OpenAI API base")
-        return values
+    @field_validator("api_key")
+    def validate_api_key(self, v: str) -> str:
+        """Validate API key."""
+        if not v or len(v.strip()) == 0:
+            raise ValueError("API key cannot be empty")
+        return v.strip()
 
-    @classmethod
-    def from_dict(cls, api_key: str, api_base: str, **kwargs):
-        return cls(api_key=api_key, api_base=api_base, **kwargs)
+    @field_validator("api_base")
+    def validate_api_base(self, v: str) -> str:
+        """Validate API base URL."""
+        if not v or len(v.strip()) == 0:
+            raise ValueError("API base URL cannot be empty")
 
-
-class OpenAIConfig(BaseConfig):
-    """Configuration for Azure OpenAI services."""
-
-    params: OpenAIParams = Field(default_factory=OpenAIParams)
-    type: str = "azure"
-
-    @classmethod
-    def from_dict(
-        cls, api_key: str, api_base: str, api_version: str, engine: str, **kwargs: Any
-    ) -> OpenAIConfig:
-        """Create config from dictionary."""
         try:
-            azure_params = OpenAIParams.from_dict(**kwargs)
-        except Exception as e:
-            raise ValueError(f"Invalid OpenAI parameters: {e}") from e
+            parsed_url = urlparse(v.strip())
 
-        return cls(api_key=api_key, api_base=api_base, params=azure_params)
+            # Check for valid scheme
+            if parsed_url.scheme not in ("http", "https"):
+                raise ValueError("URL must use http or https scheme")
+
+            # Ensure host is not empty
+            if not parsed_url.netloc:
+                raise ValueError("URL must have a valid host")
+
+            return v.strip()
+
+        except Exception as e:
+            raise ValueError(f"Invalid API base URL: {v}") from e
+
+    @field_validator("max_tokens")
+    def validate_max_tokens(self, v: int | None, info: ValidationInfo) -> int | None:
+        """Validate max_tokens against model's maximum."""
+        if v is not None:
+            # Retrieve the engine from the context
+            engine = info.data.get("engine")
+            if engine is None:
+                raise ValueError("Engine must be specified to validate max_tokens")
+
+            model_max = engine.max_tokens
+            if v > model_max:
+                raise ValueError(f"max_tokens cannot exceed {model_max} for {engine}")
+        return v
+
+
+class InferenceConfig(BaseConfig[InferenceParams]):
+    """Azure OpenAI configuration."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)

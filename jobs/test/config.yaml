@@ -1,49 +1,38 @@
-
-Model:
-  type: completion
-  name: sentiment
-  params:
-    prompt: |
-      You are a social media analytics expert. When analyzing social media content:
-      - Consider the informal nature of social media language, including slang and emojis
-      - Account for context and platform-specific communication styles
-      - Pay attention to user engagement patterns and trends
-      - Recognize sarcasm and irony where possible
-      - Consider the impact of viral or trending topics
-    schema:
-      sentiment_score: float
-      sentiment_label: str
-      confidence: float
-
 Input:
-  type: aws 
-  name: social-media
-  params:
-    database: dev_gold
-    query: |
-      SELECT p.*, r.*
-      FROM dev_gold.fact_social_media_reaction_post r
-      JOIN dev_gold.dim_post_details p
-      WHERE r.created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-      AND p.updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+  kind: aws 
+  database: dev_gold
+  query: |
+    SELECT p.*, r.*
+    FROM dev_gold.fact_social_media_reaction_post r
+    JOIN dev_gold.dim_post_details p
+    WHERE r.created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+    AND p.updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
 
 Output:
-  type: aws
-  name: social-media
-  params:
-    database: dev_test
-    query: |
-      CREATE TABLE IF NOT EXISTS dev_test.dim_social_media_420test69
-      AS SELECT * FROM source_data;
-      
-      CREATE TABLE IF NOT EXISTS dev_test.fact_social_media_420test69
-      AS SELECT * FROM results_data;
+  kind: aws
+  database: dev_test
+  query: |
+    CREATE TABLE IF NOT EXISTS dev_test.dim_social_media_420test69
+    AS SELECT * FROM source_data;
+    
+    CREATE TABLE IF NOT EXISTS dev_test.fact_social_media_420test69
+    AS SELECT * FROM results_data;
 
 Provider:
-  type: azure
-  name: azure-gpt4o
-  params:
-    engine: gpt-4o-mini
-    version: 2024-02-15-preview
-    api_base: ${OPENAI_API_BASE}
-    api_key: ${OPENAI_API_KEY}
+  engine: gpt-4o-mini
+  version: 2024-02-15-preview
+  api_base: ${OPENAI_API_BASE}
+  api_key: ${OPENAI_API_KEY}
+
+Model:
+  prompt: |
+    You are a social media analytics expert. When analyzing social media content:
+    - Consider the informal nature of social media language, including slang and emojis
+    - Account for context and platform-specific communication styles
+    - Pay attention to user engagement patterns and trends
+    - Recognize sarcasm and irony where possible
+    - Consider the impact of viral or trending topics
+  schema:
+    sentiment_score: float
+    sentiment_label: str
+    confidence: float

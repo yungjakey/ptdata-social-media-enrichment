@@ -11,30 +11,26 @@ from openai import AsyncClient, RateLimitError
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, ValidationError
 
-from src.inference.types import OpenAIConfig
+from src.inference.types import InferenceConfig
 
 logger = logging.getLogger(__name__)
 
 
-class OpenAIClient:
+class InferenceClient:
     """OpenAI client for batch processing social media content."""
+
+    _client: AsyncClient | None = None
 
     def __init__(self, config: dict[str, type]) -> None:
         """initialize client"""
-        self._config = OpenAIConfig.from_dict(**config)
-        self._client = None
+        self._config = InferenceConfig.from_dict(**config)
         self._semaphore = asyncio.Semaphore(self._config.max_workers)
-
-    def _create_client(self) -> AsyncClient:
-        """Create OpenAI client."""
-        # Remove proxies from kwargs to avoid unexpected argument
-        return AsyncClient(api_key=self._config.api_key, base_url=self._config.api_base)
 
     @property
     def client(self) -> AsyncClient:
         """lazy load client"""
         if self._client is None:
-            self._client = self._create_client()
+            self._client = AsyncClient(api_key=self._config.api_key, base_url=self._config.api_base)
         return self._client
 
     async def reset(self):
@@ -73,47 +69,51 @@ class OpenAIClient:
                     stop=self._config.stop,
                     response_format=response_format,
                 )
+            except RateLimitError as e:
+                raise Exception("Rate limit exceeded") from e
             except Exception as e:
-                logger.error(f"Error during completion: {e}")
-                raise
+                raise Exception(
+                    f"Failed to process messages: {json.dumps(messages, indent=2)}"
+                ) from e
 
             if not completion.choices:
                 raise ValueError("No completion choices returned")
 
+            response = completion.choices[0].message.content
             try:
-                result = json.loads(completion.choices[0].message.content)
-                logger.debug("Processed result: %s", json.dumps(result, indent=2))
+                result = json.loads(response)
+                logger.debug(f"Received result: {result}")
             except json.JSONDecodeError as e:
-                raise ValueError(f"Response does not match expected format: {e}") from e
+                raise Exception(f"Failed to decode JSON: {response}") from e
 
             try:
                 return response_format(**result)
             except ValidationError as e:
-                raise ValueError(f"Response does not match expected format: {e}") from e
+                raise Exception(f"Response does not match {response_format.__name__}") from e
 
     async def process_batch(
         self,
         records: list[dict],
-        inpt: type[BaseModel],
-        outpt: type[BaseModel],
+        input_model: type[BaseModel],
+        output_model: type[BaseModel],
     ) -> list[BaseModel]:
         """Process a batch of records."""
         tasks = []
         for record in records:
             try:
-                validated_record = inpt(**record)
+                validated_record = input_model(**record)
             except ValidationError as e:
                 logger.error(f"{e}: {json.dumps(record)}")
                 continue
 
-            sysmsg = outpt.__doc__
-            umsg = f"{inpt.__doc__}\n{json.dumps(validated_record.model_dump())}"
+            sysmsg = output_model.__doc__
+            umsg = f"{input_model.__doc__}\n{json.dumps(validated_record.model_dump())}"
             messages = [
                 {"role": "system", "content": sysmsg},
                 {"role": "user", "content": umsg},
             ]
 
-            tasks.append(self._process_record(messages=messages, response_format=outpt))
+            tasks.append(self._process_record(messages=messages, response_format=output_model))
 
         results = []
         try:
@@ -123,12 +123,11 @@ class OpenAIClient:
                 if not isinstance(r, Exception):
                     results.append(r)
         except Exception as e:
-            logger.error(f"Batch processing error: {e}")
-            raise
+            raise Exception("Batch processing error") from e
 
         return results
 
-    def __enter__(self) -> OpenAIClient:
+    def __enter__(self) -> InferenceClient:
         """Synchronous context manager entry."""
         return self
 
@@ -136,7 +135,7 @@ class OpenAIClient:
         """Synchronous context manager exit, cleanup resources."""
         asyncio.run(self.close())
 
-    async def __aenter__(self) -> OpenAIClient:
+    async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""
         return self
 

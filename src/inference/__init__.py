@@ -1,5 +1,5 @@
 """Azure package for social media analytics."""
 
-from .client import OpenAIClient
+from .client import InferenceClient
 
-__all__ = ["OpenAIClient"]
+__all__ = ["InferenceClient"]

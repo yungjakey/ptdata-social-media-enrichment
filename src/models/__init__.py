@@ -1,5 +1,5 @@
 """Common package for social media analytics."""
 
-from .types import ModelBuilder
+from .builder import ModelBuilder
 
 __all__ = ["ModelBuilder"]

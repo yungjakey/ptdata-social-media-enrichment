@@ -12,40 +12,52 @@ from urllib.parse import urlparse
 
 import aioboto3
 from botocore.exceptions import ClientError
+from pyarrow import BufferOutputStream
 from pyarrow import parquet as pq
 from pydantic import BaseModel, ValidationError
 
-from src.common.types import TypeConverter
-from src.connectors.aws.types import (
-    AWSClientConfig,
+from src.connectors.aws.types import AWSConfig
+from src.connectors.aws.utils import (
     MalformedResponseError,
     NotConnectedError,
     QueryExecutionError,
     QueryState,
 )
-from src.connectors.types import ConnectorConfig
+from src.connectors.types import BaseConnector
 
 logger = logging.getLogger(__name__)
 
 
-class AWSClient(ConnectorConfig):
+_BASE_PROPS = {
+    "projection.enabled": "true",
+    "projection.year.type": "integer",
+    "projection.year.range": f"{datetime.now().year-1},{datetime.now().year+5}",
+    "projection.month.type": "integer",
+    "projection.month.range": "1,12",
+}
+
+
+class AWSClient(BaseConnector):
     """AWS Athena client implementation."""
 
     POLL_INTERVAL = 1.0  # seconds
 
     def __init__(self, config: dict[str, Any]) -> None:
         """Initialize AWS client."""
+
         # Validate config type and convert to AWSClientConfig
         if not isinstance(config, dict):
             raise ValueError("Config must be a dictionary")
 
-        self.config = AWSClientConfig.from_dict(**config)
+        self.config = AWSConfig.from_dict(**config)
         self._session = None
         self._athena = None
         self._glue = None
         self._s3 = None
 
-    async def validate(self) -> None:
+    async def validate(
+        self,
+    ) -> None:
         """Validate AWS client configuration."""
         if not self._athena:
             raise NotConnectedError("Not connected to AWS")
@@ -84,14 +96,19 @@ class AWSClient(ConnectorConfig):
 
     async def disconnect(self) -> None:
         """Disconnect from AWS services."""
+
         # No need to explicitly call __aexit__ as async context managers handle this
         self._session = None
         self._athena = None
         self._glue = None
         self._s3 = None
 
-    def _get_query_state(self, response: dict[str, Any]) -> tuple[QueryState, str | None]:
+    def _get_query_state(
+        self,
+        response: dict[str, Any],
+    ) -> tuple[QueryState, str | None]:
         """Extract query state and reason from response."""
+
         # Validate the response structure
         if not response or "QueryExecution" not in response:
             raise MalformedResponseError(response, "QueryExecution")
@@ -114,6 +131,7 @@ class AWSClient(ConnectorConfig):
 
     async def _submit(self, query: str) -> str:
         """Execute a query and return the execution ID."""
+
         if not self._athena:
             raise NotConnectedError("Not connected to AWS")
 
@@ -133,9 +151,14 @@ class AWSClient(ConnectorConfig):
             logger.error("Failed to execute query: %s", e)
             raise
 
-    async def _wait(self, query_id: str, timeout: float = 300.0) -> None:
+    async def _wait(
+        self,
+        query_id: str,
+        timeout: float = 300.0,
+    ) -> None:
         """
         Wait for query completion with a timeout."""
+
         max_iterations = int(timeout / self.POLL_INTERVAL)
 
         for _ in range(max_iterations):
@@ -162,6 +185,7 @@ class AWSClient(ConnectorConfig):
 
     def _get(self, query_id: str) -> list[dict[str, type]]:
         """Process rows from Athena response into list of records."""
+
         response = self._athena.get_query_results(QueryExecutionId=query_id)
 
         # Extract headers from first row if not done
@@ -198,62 +222,81 @@ class AWSClient(ConnectorConfig):
         return records
 
     async def _write(
-        self, records: AsyncIterator[BaseModel], output_model: type[BaseModel], output_dir: str
-    ):
-        """Write records to a table using CTAS with partitioning."""
-        # validate results
-        data = []
-        async for record in records:
-            if not isinstance(record, BaseModel):
-                logger.warning(f"Skipping non-model record: {record}")
-                continue
-            data.append(record.model_dump())
+        self,
+        records: AsyncIterator[BaseModel],
+        output_name: str,
+    ) -> None:
+        # Convert records directly to pyarrow table
+        data = [record.model_dump() async for record in records]
+        table = pq.Table.from_pylist(data)
 
-        if not data:
-            logger.warning("No valid records to write")
-            return
+        # Create an in-memory buffer to write the table
+        buffer = BufferOutputStream()
+        pq.write_table(table, buffer)
 
-        # create pyarrow table
-        table = pq.Table.from_pandas(pd.DataFrame(data))
-
-        # write to s3
+        # Write to s3
         try:
             await self._s3.put_object(
                 Bucket=urlparse(self.config.params.output_location).netloc,
-                Key=f"{output_dir}/data.parquet",
-                Body=table.to_buffer().tobytes(),
+                Key=output_name,
+                Body=buffer.getvalue().to_pybytes(),
             )
         except ClientError as e:
-            raise RuntimeError(f"Error writing to {output_dir}: {e}") from e
+            raise RuntimeError(f"Error writing to {output_name}") from e
 
-    async def _create(self, name: str, output_dir: str, schema: dict[str, str]) -> None:
-        create_table = f"""
-            CREATE TABLE IF NOT EXISTS "{self.config.params.database}.{name}" (
-                {', '.join(f'"{name}" {type_}' for name, type_ in schema.items())}
-            )
-            PARTITIONED BY (year, month, day, hour)
-            STORED AS PARQUET
-            LOCATION '{output_dir}'
-            """
-
+    async def _create_or_update(
+        self,
+        database_name: str,
+        table_name: str,
+        base_dir: str,
+        props: dict[str, str],
+    ):
+        props_str = ", ".join(f"'{k}' = '{v}'" for k, v in props.items())
         try:
-            query_id = await self._submit(create_table)
-            await self._wait_for_query(query_id)
+            # Check if table exists
+            await self._glue.get_table(DatabaseName=database_name, Name=table_name)
 
-            # Repair table to pick up new partition
-            repair_query = f'MSCK REPAIR TABLE "{self.config.params.database}.{name}"'
-            query_id = await self._submit(repair_query)
-            await self._wait_for_query(query_id)
+            # Update existing table with partition projection
+            alter_table = f"""
+            ALTER TABLE "{table_name}" SET TBLPROPERTIES ({props_str})
+            """
+            await self._submit(alter_table)
+
         except ClientError as e:
-            raise ClientError(f"Failed to create table {name}: {e}") from e
+            if e.response["Error"]["Code"] == "EntityNotFoundException":
+                # Create new table with partition projection
+                create_table = f"""
+                CREATE EXTERNAL TABLE "{table_name}"
+                PARTITIONED BY (
+                    year string,
+                    month string
+                )
+                STORED AS PARQUET
+                LOCATION '{base_dir}'
+                TBLPROPERTIES ({props_str})
+                """
+                try:
+                    query_id = await self._submit(create_table)
+                    await self._wait_for_query(query_id)
+                except Exception as create_error:
+                    raise RuntimeError(
+                        f"Failed to create table {table_name}: {create_error}"
+                    ) from create_error
+            else:
+                raise RuntimeError(f"Error accessing table {table_name}: {e}") from e
 
     async def read(
         self,
         input_model: type[BaseModel],
-    ) -> AsyncIterator[BaseModel | dict[str, type]]:
+    ) -> AsyncIterator[BaseModel]:
         """Execute a query and yield results."""
+
         if not self._athena:
             raise NotConnectedError("Not connected to AWS")
+
+        # Validate input model
+        if not issubclass(input_model, BaseModel):
+            raise ValueError(f"Input model must be a Pydantic BaseModel, got {input_model}")
 
         # submit query
         query_id = await self._submit(self.config.params.query)
@@ -272,52 +315,24 @@ class AWSClient(ConnectorConfig):
     async def write(
         self,
         records: AsyncIterator[BaseModel],
-        output_model: type[BaseModel],
+        model_name: str,
         execution_time: datetime,
     ) -> None:
-        """Write records to a table using CTAS with partitioning."""
-        if not self._s3 or not self._athena:
-            raise NotConnectedError("Not connected to AWS")
+        # Generate partition-aware output directory
+        base_dir = f"{self.config.params.output_location}/model={model_name}"
+        output_name = f"{base_dir}/{execution_time:year=%y/month=%m/:%S}.parquet"
 
-        # get schema
-        schema = TypeConverter.py2athena(output_model)
+        # Write records to S3 first
+        await self._write(records, output_name)
 
-        # partition location
-        base_dir = urlparse(self.config.params.output_location).path
-        output_dir = f"{base_dir}/{execution_time:year=%Y/month=%m/day=%d/hour=%H}/model={output_model.__name__}"
-
-        # write to s
-        await self._write(records, output_model, output_dir)
-
-        # create table
-        await self._create(output_model.__name__, output_dir, schema)
-
-    def __enter__(self) -> AWSClient:
-        """Enter sync context manager."""
-        return self
-
-    def __exit__(self, exc_type: type | None, exc: Exception | None, tb: type | None) -> None:
-        """Exit sync context manager."""
-        if self._session:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self.disconnect())
-                else:
-                    asyncio.run(self.disconnect())
-            except Exception as e:
-                logger.error(f"Error disconnecting from AWS: {e}")
-
-    async def __aenter__(self) -> AWSClient:
-        """Enter async context manager."""
-        await self.connect()
-        return self
-
-    async def __aexit__(
-        self, exc_type: type | None, exc: Exception | None, tb: type | None
-    ) -> None:
-        """Exit async context manager."""
-        try:
-            await self.disconnect()
-        except Exception as e:
-            logger.error(f"Error disconnecting from AWS: {e}")
+        # Define table properties
+        table_props = {
+            **_BASE_PROPS,
+            "storage.location.template": f"{base_dir}/year=${{year}}/month=${{month}}",
+        }
+        await self._create_or_update(
+            self.config.params.database,
+            model_name,
+            base_dir,
+            table_props,
+        )
