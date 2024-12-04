@@ -8,7 +8,7 @@ from typing import Any, get_args, get_origin
 from pydantic import BaseModel, create_model
 
 from src.common.component import ComponentFactory
-from src.models.types import ModelConfig
+from src.models.config import ModelConfig
 
 logger = logging.getLogger(__name__)
 

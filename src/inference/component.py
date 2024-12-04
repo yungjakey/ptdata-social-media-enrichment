@@ -12,7 +12,7 @@ from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, ValidationError
 
 from src.common.component import ComponentFactory
-from src.inference.types import InferenceConfig
+from src.inference.config import InferenceConfig
 
 logger = logging.getLogger(__name__)
 
