@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class InferenceClient(ComponentFactory):
     """Manages inference client configuration."""
 
-    _config: type[InferenceConfig]
+    _config = InferenceConfig
 
     def __init__(self, config: InferenceConfig) -> None:
         """Initialize client."""
@@ -31,20 +31,10 @@ class InferenceClient(ComponentFactory):
     @property
     def client(self) -> AsyncClient:
         """Lazy load client."""
+
         if self._client is None:
             self._client = AsyncClient(api_key=self._config.api_key, base_url=self._config.api_base)
         return self._client
-
-    async def reset(self):
-        """Reset client and clear resources."""
-        if self._client:
-            try:
-                await self._client.close()
-            except Exception as e:
-                logger.error(f"Error closing client: {e}")
-            finally:
-                # Force a new client to be created on next access
-                self._client = None
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type(RateLimitError),
@@ -126,16 +116,9 @@ class InferenceClient(ComponentFactory):
 
         return results
 
-    async def __aenter__(self) -> InferenceClient:
-        """Async context manager entry."""
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit, cleanup resources."""
-        await self.close()
-
     async def close(self):
         """Close client."""
+
         if self._client:
             try:
                 await self._client.close()
@@ -143,3 +126,24 @@ class InferenceClient(ComponentFactory):
                 logger.error(f"Error closing client: {e}")
             finally:
                 self._client = None
+
+    async def reset(self):
+        """Reset client and clear resources."""
+
+        if self._client:
+            try:
+                await self._client.close()
+            except Exception as e:
+                logger.error(f"Error closing client: {e}")
+            finally:
+                self._client = None
+
+    async def __aenter__(self) -> InferenceClient:
+        """Async context manager entry."""
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit, cleanup resources."""
+
+        await self.close()

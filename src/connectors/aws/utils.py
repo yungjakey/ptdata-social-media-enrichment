@@ -1,54 +1,99 @@
 from __future__ import annotations
 
-from enum import Enum, auto
+from enum import Enum
 from typing import Any
 
+from jinja2 import BaseLoader, Environment
 
-class QueryState(Enum):
-    """Enumeration of possible Athena query states."""
+ENV = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True, autoescape=True)
 
-    QUEUED = auto()
-    RUNNING = auto()
-    SUCCEEDED = auto()
-    FAILED = auto()
-    CANCELLED = auto()
+SQL_CREATE_TABLE = """
+CREATE EXTERNAL TABLE {{ table_name }}
+{%- if partition_columns %}
+PARTITIONED BY (
+    {%- for col, dtype in partition_columns %}
+    {{ col }} {{ dtype }}{% if not loop.last %},{% endif %}
+    {%- endfor %}
+)
+{%- endif %}
+STORED AS PARQUET
+LOCATION '{{ base_dir }}'
+{%- if table_properties %}
+TBLPROPERTIES (
+    {%- for key, value in table_properties %}
+    '{{ key }}' = '{{ value }}'{% if not loop.last %},{% endif %}
+    {%- endfor %}
+)
+{%- endif %}
+""".strip()
+
+
+def get_table_query(
+    table_name: str,
+    base_dir: str,
+    partitions: dict[str, str] | None = None,
+    properties: dict[str, str] | None = None,
+) -> str:
+    """Generate CREATE TABLE query for AWS Glue/Athena."""
+    # Define default Parquet-specific properties
+    default_parquet_properties = {
+        # Compression for Parquet files
+        "parquet.compression": "SNAPPY",
+        "parquet.bloom.filter.enabled": "true",
+        "parquet.write.validation": "true",
+        "store.parquet.dictionary.encoding.enabled": "true",
+        "parquet.metadata.read.cache.size": "1000",
+    }
+
+    # Merge default properties with user-provided properties
+    table_properties = {**default_parquet_properties, **(properties or {})}
+
+    # Handle partitioning
+    if partitions:
+        # Add partition projection properties
+        table_properties.update(
+            {
+                "projection.enabled": "true",
+                **{f"projection.{col}.type": dtype for col, dtype in partitions.items()},
+                "storage.location.template": f"{base_dir}/{'/'.join(f'{col}=${{{col}}}' for col in partitions)}",
+            }
+        )
+
+    template = ENV.from_string(SQL_CREATE_TABLE)
+    return template.render(
+        table_name=table_name,
+        base_dir=base_dir,
+        partition_columns=list(partitions.items()) if partitions else None,
+        table_properties=table_properties,
+    )
+
+
+class QueryState(str, Enum):
+    """Athena query states.
+    Reference: https://docs.aws.amazon.com/athena/latest/APIReference/API_QueryExecutionStatus.html
+    """
+
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
     @classmethod
     def terminal_states(cls) -> set[QueryState]:
-        """Return terminal states."""
+        """States where no further status changes will occur."""
         return {cls.SUCCEEDED, cls.FAILED, cls.CANCELLED}
 
     @classmethod
     def running_states(cls) -> set[QueryState]:
-        """Return running states."""
+        """States where query is still processing."""
         return {cls.QUEUED, cls.RUNNING}
 
-
-class NotConnectedError(Exception):
-    """Raised when trying to use client before connecting."""
-
-
-class S3LocationError(Exception):
-    """Raised when S3 location is invalid."""
-
-
-class QueryExecutionError(Exception):
-    """Raised when a query execution fails."""
-
-    def __init__(self, query_id: str, state: QueryState, reason: str | None = None):
-        self.query_id = query_id
-        self.state = state
-        self.reason = reason
-        message = f"Query {query_id} failed with state {state.name}"
-        if reason:
-            message += f": {reason}"
-        super().__init__(message)
-
-
-class MalformedResponseError(Exception):
-    """Raised when AWS response is missing required fields."""
-
-    def __init__(self, response: dict[str, Any], missing_field: str):
-        self.response = response
-        self.missing_field = missing_field
-        super().__init__(f"AWS response missing required field: {missing_field}")
+    @classmethod
+    def from_response(cls, status: dict[str, Any]) -> QueryState:
+        """Create QueryState from Athena API response."""
+        try:
+            state = status["State"]
+            return cls(state)
+        except (KeyError, ValueError) as e:
+            raise Exception(f"Error parsing Athena query state: {status}.") from e
