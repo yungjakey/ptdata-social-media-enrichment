@@ -1,0 +1,16 @@
+[
+    {
+        "post_key": "123",
+        "post_message": "I absolutely love this product! Best purchase ever! 😍",
+        "likes": "1000",
+        "comments": "50",
+        "shares": "25"
+    },
+    {
+        "post_key": "456",
+        "post_message": "This is terrible service. Never buying again. 😡",
+        "likes": "10",
+        "comments": "30",
+        "shares": "5"
+    }
+]

@@ -19,17 +19,15 @@ class InferenceConfig(BaseConfig):
     engine: str = "gpt-4o"
 
     api_key: str | None = Field(
-        None,
+        default=None,
         description="API key",
-        min_length=1,
     )
     api_base: str | None = Field(
-        None,
+        default=None,
         description="API base URL",
-        min_length=1,
     )
 
-    @validator("api_key")
+    @validator("api_key", pre=True)
     @classmethod
     def validate_api_key(cls, v: str | None = None) -> str:
         if not v:
@@ -38,7 +36,7 @@ class InferenceConfig(BaseConfig):
             raise ValueError("API key is required")
         return v
 
-    @validator("api_base")
+    @validator("api_base", pre=True)
     @classmethod
     def validate_api_base(cls, v: str | None = None) -> str:
         if not v:

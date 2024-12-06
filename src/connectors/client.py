@@ -11,6 +11,7 @@ from enum import Enum
 
 import aioboto3
 import pyarrow as pa
+import pyarrow.parquet as pq
 from pydantic import BaseModel
 
 from src.common.component import ComponentFactory
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 class AWSClientType(Enum):
     """Enum for AWS client types."""
 
-    S3 = "S3"
+    S3 = "s3"
     ATHENA = "athena"
     GLUE = "glue"
 
@@ -70,12 +71,6 @@ class AWSConnector(ComponentFactory):
                     await client.close()
                 except Exception as e:
                     logger.debug(f"Error closing client: {e}")
-
-        if self.session:
-            try:
-                await self.session.close()
-            except Exception as e:
-                logger.debug(f"Error closing session: {e}")
 
         self._clients = {c: None for c in AWSClientType}
         self.session = None
@@ -162,22 +157,24 @@ class AWSConnector(ComponentFactory):
     async def _write_to_s3(
         self,
         records: list[dict[str, type]],
-        schema: dict[str, str],
-        base_dir: str,
+        schema: pa.Schema,
         file_name: str,
-    ) -> str:
+    ) -> None:
         """Write records to S3."""
 
         if (client := await self.client(AWSClientType.S3)) is None:
             raise RuntimeError("Cant connect to S3")
 
-        table = pa.Table.from_pydict(records, schema=schema)
+        table = pa.Table.from_pylist(records, schema=schema)
         output = pa.BufferOutputStream()
-        pa.write_table(table, output)
+        pq.write_table(table, output)
+        buffer = output.getvalue().to_pybytes()
 
-        await client.put_object(Bucket=base_dir, Key=file_name, Body=output.getvalue())
-
-        return base_dir
+        await client.put_object(
+            Bucket=self.config.bucket_name,
+            Key=file_name,
+            Body=buffer,
+        )
 
     async def _create_or_update(
         self,
@@ -270,23 +267,27 @@ class AWSConnector(ComponentFactory):
 
         now = datetime.now()
         base_dir = _get_partition_path(now, partitions)
-        file_name = f"{now:%S}.{self.config.target_format}"
+        file_name = os.path.join(base_dir, f"{now:%S}.{self.config.target_format}")
+
+        pydantic_schema = TypeConverter.pydantic2py(output_format)
 
         # write
-        py_schema = {**TypeConverter.pydantic2py(output_format), **partitions}
+        pa_schema = TypeConverter.py2pa(pydantic_schema)
         try:
-            await self._write_to_s3(records, py_schema, base_dir, file_name)
+            await self._write_to_s3(records, pa_schema, file_name)
             logger.info(f"Wrote {len(records)} records to {base_dir}")
         except Exception as e:
-            raise RuntimeError("Error writing output") from e
+            logger.error(f"Error writing output: {e}", exc_info=True)
+            raise
 
-        # create or update table
-        glue_schema = TypeConverter.py2glue(py_schema)
-        try:
-            await self._create_or_update(glue_schema, base_dir, partitions)
-            logger.info("Table created/updated")
-        except Exception as e:
-            raise RuntimeError("Error creating/updating table") from e
+        # # create or update table
+        # glue_schema = TypeConverter.py2glue(pydantic_schema)
+        # try:
+        #     await self._create_or_update(glue_schema, base_dir, partitions)
+        #     logger.info("Table created/updated")
+        # except Exception as e:
+        #     logger.error(f"Error creating/updating table: {e}", exc_info=True)
+        #     raise
 
     async def __aenter__(self) -> AWSConnector:
         """Async context manager entry."""

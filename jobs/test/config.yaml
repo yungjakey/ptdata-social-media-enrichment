@@ -1,12 +1,11 @@
 connector:
-  output_location: s3://orf-temp
+  bucket_name: orf-temp
   source_query: |  
     SELECT p.*, r.*
     FROM dev_gold.fact_social_media_reaction_post r
     JOIN dev_gold.dim_post_details p ON r.post_key = p.post_key
     WHERE r.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
     AND p.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-    
+
 inference:
-  workers: 5
   response_format: sentiment

@@ -12,28 +12,34 @@ _VALID_IMPLEMENTATIONS = ["sql", "file"]
 class AWSConnectorConfig(BaseConfig):
     """Unified configuration for AWS connector."""
 
-    output_location: str = Field(
+    region: str = "eu-central-1"
+    workgroup: str = "primary"
+    target_format: str = "parquet"
+
+    bucket_name: str = Field(
         ...,
         description="S3 output location",
-        pattern=r"^s3://[a-z0-9.-]+(?:/[a-z0-9._-]+)*/?$",
     )
+
     source_query: str = Field(
         ...,
         description="Source query for Athena",
     )
 
-    region: str = "eu-central-1"
-    workgroup: str = "primary"
-    target_format: str = "parquet"
     timeout: int = Field(
         default=60,
         description="Query timeout in seconds",
         ge=1,
         le=60,
     )
+
     poll_interval: int = Field(
         default=5,
         description="Poll interval in seconds",
         ge=1,
         le=10,
     )
+
+    @property
+    def output_location(self) -> str:
+        return f"s3://{self.bucket_name}"

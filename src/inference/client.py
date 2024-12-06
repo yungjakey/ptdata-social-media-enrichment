@@ -100,7 +100,7 @@ class InferenceClient(ComponentFactory):
             try:
                 return json.loads(content)  # Parse JSON response
             except json.JSONDecodeError as e:
-                raise ValueError(f"wInvalid JSON response: {content}") from e
+                raise ValueError(f"Invalid JSON response: {content}") from e
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type(RateLimitError),
