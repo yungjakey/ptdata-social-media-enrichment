@@ -21,6 +21,9 @@ from .utils import QueryState, TypeConverter, _get_partition_path
 
 logger = logging.getLogger(__name__)
 
+# TODO: fix this abomination
+HEX_FIELDS = {"id", "date_key", "channel_key", "post_key"}
+
 
 class AWSClientType(Enum):
     """Enum for AWS client types."""
@@ -58,6 +61,7 @@ class AWSConnector(ComponentFactory):
         self.session = aioboto3.Session()
         for c in AWSClientType:
             self._clients[c] = None
+
         logger.debug("Connected to AWS services")
 
     async def disconnect(self) -> None:
@@ -118,38 +122,34 @@ class AWSConnector(ComponentFactory):
     async def parse_results(
         self,
         query_id: str,
-    ) -> AsyncIterator[dict[str, type] | None]:
+    ) -> AsyncIterator[tuple[list[str], list[dict[str, str]]]]:
         """Process rows from Athena response into records."""
-
         if (client := await self.client(AWSClientType.ATHENA)) is None:
             raise RuntimeError("Cant connect to Athena")
 
         try:
             async with asyncio.timeout(self.config.timeout):
                 response = await client.get_query_results(QueryExecutionId=query_id)
-                if not response["ResultSet"]["Rows"]:
+                if (rows := response["ResultSet"]["Rows"]) is None or len(rows) < 2:
                     raise RuntimeError("Query returned no results")
 
-                # Get column names from the first row
-                header_row = response["ResultSet"]["Rows"][0]["Data"]
-                columns = []
-                for col in header_row:
-                    # Handle different possible formats of column data
-                    if isinstance(col, dict):
-                        columns.append(col.get("VarCharValue", ""))
-                    else:
-                        columns.append(str(col))
+                # First row contains column names
+                columns = [col["VarCharValue"] for col in rows[0]["Data"]]
 
-                # Process each data row
-                for row in response["ResultSet"]["Rows"][1:]:  # Skip header row
-                    values = []
-                    for col in row["Data"]:
-                        if isinstance(col, dict):
-                            values.append(col.get("VarCharValue", ""))
-                        else:
-                            values.append(str(col))
+                # Remaining rows are data
+                data_rows = []
+                for row in rows[1:]:
+                    values = [col.get("VarCharValue", "") for col in row["Data"]]
                     record = dict(zip(columns, values, strict=False))
-                    yield record
+
+                    # Remove spaces from hex fields
+                    for field in HEX_FIELDS:
+                        if field in record:
+                            record[field] = record[field].replace(" ", "")
+
+                    data_rows.append(record)
+
+                yield columns, data_rows
 
         except TimeoutError:
             logger.error(f"Result set timed out after {self.config.timeout} seconds")
@@ -229,7 +229,8 @@ class AWSConnector(ComponentFactory):
         try:
             execution_id = await self.execute_query(self.config.source_query)
         except Exception as e:
-            raise RuntimeError("Error executing query") from e
+            logger.error(f"Error executing query: {e}", exc_info=True)
+            raise e
 
         if not execution_id:
             raise RuntimeError("Not query id received")
@@ -238,11 +239,12 @@ class AWSConnector(ComponentFactory):
 
         # Parse results
         try:
-            async for header, *rows in self.parse_results(execution_id):
+            async for columns, rows in self.parse_results(execution_id):
                 logger.info(f"Query returned {len(rows)} rows")
-                return header, rows
+                return columns, rows
         except Exception as e:
-            raise RuntimeError("Error retrieving query results") from e
+            logger.error(f"Error parsing query results: {e}", exc_info=True)
+            raise e
 
     async def write(
         self,
@@ -278,7 +280,7 @@ class AWSConnector(ComponentFactory):
             logger.info(f"Wrote {len(records)} records to {base_dir}")
         except Exception as e:
             logger.error(f"Error writing output: {e}", exc_info=True)
-            raise
+            raise e
 
         # # create or update table
         # glue_schema = TypeConverter.py2glue(pydantic_schema)

@@ -6,8 +6,6 @@ from pydantic import Field
 
 from src.common.config import BaseConfig
 
-_VALID_IMPLEMENTATIONS = ["sql", "file"]
-
 
 class AWSConnectorConfig(BaseConfig):
     """Unified configuration for AWS connector."""

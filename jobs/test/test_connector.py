@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from src.connectors import AWSConnector
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -38,14 +38,14 @@ async def test_connection():
 
     async with AWSConnector.from_config(config) as connector:
         # Test reading
-        # try:
-        #     data = await connector.read()
-        #     logger.info(f"Read {len(data)} records from source")
-        #     for record in data:
-        #         logger.info(f"Record: {json.dumps(record, indent=2)}")
-        # except Exception as e:
-        #     logger.error(f"Failed to read data from source: {e}")
-        #     return
+        try:
+            columns, rows = await connector.read()
+            logger.info(f"Read {len(rows)} records with {columns}")
+            for record in rows:
+                logger.info(f"Record: {json.dumps(record, indent=2)}")
+        except Exception as e:
+            logger.error(f"Failed to read data from source: {e}")
+            return
 
         # Test writing
         try:
