@@ -1,8 +1,6 @@
-from __future__ import annotations
+from typing import Any, TypeVar
 
-from typing import TypeVar
-
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseConfig(BaseModel):
@@ -13,5 +11,9 @@ class BaseConfig(BaseModel):
     )
 
 
-# Type hint for generic config types
+class RootConfig(BaseConfig):
+    connector: dict[str, Any] = Field(..., description="Connector configuration")
+    inference: dict[str, Any] = Field(..., description="Inference configuration")
+
+
 TConf = TypeVar("TConf", bound=BaseConfig)

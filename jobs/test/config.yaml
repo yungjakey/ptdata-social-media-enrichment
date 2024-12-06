@@ -1,24 +1,12 @@
-Extract:
-  provider: aws 
-  params:
-    $type: sql
-    output_location: s3://your-bucket/output
-    database: dev_gold
-    query: |  
-      SELECT p.*, r.*
-      FROM fact_social_media_reaction_post r
-      JOIN dim_post_details p
-      WHERE r.created_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-      AND p.updated_at >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
-      
-Transform:
+connector:
+  output_location: s3://orf-temp
+  source_query: |  
+    SELECT p.*, r.*
+    FROM dev_gold.fact_social_media_reaction_post r
+    JOIN dev_gold.dim_post_details p ON r.post_key = p.post_key
+    WHERE r.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+    AND p.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+    
+inference:
+  workers: 5
   response_format: sentiment
-  api_base: ${OPENAI_API_BASE}
-  api_key: ${OPENAI_API_KEY}
-
-Load:
-  provider: aws
-  params:
-    $type: file
-    output_location: s3://your-bucket/output
-    format: parquet

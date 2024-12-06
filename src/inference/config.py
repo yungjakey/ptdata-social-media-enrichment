@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import os
 
-from pydantic import BaseModel, Field, validates
+from pydantic import BaseModel, Field, validator
 
 from src.common.config import BaseConfig
 
@@ -13,47 +14,58 @@ class InferenceConfig(BaseConfig):
     """Inference configuration."""
 
     provider: str = "azure"
-    engine: str = "gpt-4o-mini"
-    version: str = "2024-02-15-preview"
+    version: str = "2024-08-01-preview"
+    deployment: str = "gpt-4o"
+    engine: str = "gpt-4o"
 
-    response_format: type[BaseModel] = Field(
-        ...,
-        description="Response format",
-        min_length=1,
-    )
-
-    @validates("response_format", pre=True)
-    @classmethod
-    def validate_response_format(cls, v: str) -> type[BaseModel]:
-        """validate specified response format exists locally"""
-        try:
-            mod = importlib.import_module(f"src.inference.models.{v.lower()}")
-        except ImportError as e:
-            raise ValueError(f"Invalid response format: {v}") from e
-
-        try:
-            return getattr(mod, v.capitalize())
-        except AttributeError as e:
-            raise ValueError(f"Invalid response format: {v}") from e
-
-    api_base: str = Field(
-        ...,
-        description="API base URL",
-        pattern=r"^https?://[a-zA-Z0-9.-]+(?::\d+)?(?:/\S*)?$",
-    )
-
-    api_key: str = Field(
-        ...,
+    api_key: str | None = Field(
+        None,
         description="API key",
         min_length=1,
     )
+    api_base: str | None = Field(
+        None,
+        description="API base URL",
+        min_length=1,
+    )
+
+    @validator("api_key")
+    @classmethod
+    def validate_api_key(cls, v: str | None = None) -> str:
+        if not v:
+            v = os.getenv("OPENAI_API_KEY")
+        if not v:
+            raise ValueError("API key is required")
+        return v
+
+    @validator("api_base")
+    @classmethod
+    def validate_api_base(cls, v: str | None = None) -> str:
+        if not v:
+            v = os.getenv("OPENAI_API_BASE")
+        if not v:
+            raise ValueError("API base URL is required")
+        return v
 
     workers: int = Field(
-        default=5,
         description="Number of workers",
         ge=1,
         le=10,
+        default=1,
     )
+    response_format: type[BaseModel] | str = Field(
+        ...,
+        description="Response format",
+    )
+
+    @validator("response_format", pre=True)
+    @classmethod
+    def validate_response_format(cls, v: str) -> type[BaseModel]:
+        try:
+            mod = importlib.import_module(f"src.inference.models.{v.lower()}")
+            return getattr(mod, v.capitalize())
+        except (ImportError, AttributeError) as e:
+            raise ValueError(f"Invalid response format: {v}") from e
 
     temperature: float = Field(
         default=0.7,
@@ -61,11 +73,15 @@ class InferenceConfig(BaseConfig):
         ge=0.0,
         le=1.0,
     )
-
     max_tokens: int | None = Field(
         default=None,
         description="Maximum number of tokens to generate",
-        gt=0 if not None else None,
+        ge=0,
+        le=4096,
     )
-
-    timeout: int = Field(default=10, description="Request timeout in seconds", ge=1, le=60)
+    timeout: int | None = Field(
+        default=None,
+        description="Request timeout in seconds",
+        ge=1,
+        le=60,
+    )
