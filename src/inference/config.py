@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 
 from pydantic import BaseModel, Field, validator
 
@@ -19,36 +18,18 @@ class InferenceConfig(BaseConfig):
     engine: str = "gpt-4o"
 
     api_key: str | None = Field(
-        default=None,
+        default=...,
         description="API key",
     )
     api_base: str | None = Field(
-        default=None,
+        default=...,
         description="API base URL",
     )
-
-    @validator("api_key", pre=True)
-    @classmethod
-    def validate_api_key(cls, v: str | None = None) -> str:
-        if not v:
-            v = os.getenv("OPENAI_API_KEY")
-        if not v:
-            raise ValueError("API key is required")
-        return v
-
-    @validator("api_base", pre=True)
-    @classmethod
-    def validate_api_base(cls, v: str | None = None) -> str:
-        if not v:
-            v = os.getenv("OPENAI_API_BASE")
-        if not v:
-            raise ValueError("API base URL is required")
-        return v
 
     workers: int = Field(
         description="Number of workers",
         ge=1,
-        le=10,
+        le=50,
         default=1,
     )
     response_format: type[BaseModel] | str = Field(

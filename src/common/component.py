@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from src.common.config import BaseConfig, TConf
 
 
@@ -15,7 +13,7 @@ class ComponentFactory:
         self._config = config
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> ComponentFactory:
+    def from_config(cls, config: dict[str, type]) -> ComponentFactory:
         """Create a component from a configuration dictionary."""
         return cls(cls._config(**config))
 

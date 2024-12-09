@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -11,18 +12,22 @@ from enum import Enum
 
 import aioboto3
 import pyarrow as pa
+import pyarrow.fs as pa_fs
 import pyarrow.parquet as pq
 from pydantic import BaseModel
 
 from src.common.component import ComponentFactory
 
 from .config import AWSConnectorConfig
-from .utils import QueryState, TypeConverter, _get_partition_path
+from .utils import QueryState, TypeMap
 
 logger = logging.getLogger(__name__)
 
+# TODO: fix this abomination
+HEX_FIELDS = {"id", "date_key", "channel_key", "post_key"}
 
-class AWSClientType(Enum):
+
+class AWSClientType(str, Enum):
     """Enum for AWS client types."""
 
     S3 = "s3"
@@ -40,6 +45,7 @@ class AWSConnector(ComponentFactory):
         """Initialize AWS connector."""
         super().__init__(config)
         self.session: aioboto3.Session | None = None
+        self.table = self.config.table_config
 
     async def client(self, c: AWSClientType) -> aioboto3.Client:
         """Lazy load client."""
@@ -58,6 +64,7 @@ class AWSConnector(ComponentFactory):
         self.session = aioboto3.Session()
         for c in AWSClientType:
             self._clients[c] = None
+
         logger.debug("Connected to AWS services")
 
     async def disconnect(self) -> None:
@@ -76,11 +83,242 @@ class AWSConnector(ComponentFactory):
         self.session = None
         logger.debug("AWS session closed")
 
-    async def execute_query(self, query: str) -> str | None:
-        """Execute a query and wait for completion."""
+    async def list(self, prefix: str) -> list[dict[str, any]]:
+        """List files in the configured table location."""
+        if (client := await self.client(AWSClientType.S3)) is None:
+            raise RuntimeError("Cant connect to S3")
 
+        try:
+            path = os.path.join(self.config.bucket_name)
+            response = await client.list_objects_v2(
+                Bucket=self.config.bucket_name,
+                Prefix=prefix,
+            )
+
+            if "Contents" not in response:
+                response["Contents"] = {}
+
+            logger.info(f"Found {len(response['Contents'])} files in {path}")
+            return response["Contents"]
+
+        except Exception as e:
+            logger.error(f"Error listing S3 files: {e}")
+            raise RuntimeError("Failed to list S3 files") from e
+
+    async def _get_or_create_table(
+        self,
+        base_path: str,
+        model_columns: list[dict[str, str]],
+    ) -> dict[str, type]:
+        """Get or create table and return its schema."""
+
+        if (client := await self.client(AWSClientType.GLUE)) is None:
+            raise RuntimeError("Cant connect to Glue")
+
+        # Ensure database exists
+        try:
+            await client.get_database(Name=self.table.database)
+            logger.debug(f"Database {self.table.database} found")
+        except client.exceptions.EntityNotFoundException as e:
+            logger.error(f"Database {self.table.database} not found")
+            raise RuntimeError("Database not found") from e
+
+        # check table
+        try:
+            table = await client.get_table(
+                DatabaseName=self.table.database,
+                Name=self.table.table_name,
+            )
+            logger.info(f"Table {self.table.table_name} found")
+        except client.exceptions.EntityNotFoundException:
+            logger.info(f"Table {self.table.table_name} not found, creating")
+
+            # Create storage descriptor for table
+            storage_descriptor = {
+                "Columns": model_columns,
+                "Location": base_path,
+                "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+                "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+                "SerdeInfo": {
+                    "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe",
+                },
+            }
+
+            await client.create_table(
+                DatabaseName=self.table.database,
+                TableInput={
+                    "Name": self.table.table_name,
+                    "StorageDescriptor": storage_descriptor,
+                    "PartitionKeys": self.table.partition_keys,
+                },
+            )
+
+            # Construct table definition since create_table returns empty response
+            table = {
+                "StorageDescriptor": storage_descriptor,
+                "PartitionKeys": self.table.partition_keys,
+            }
+
+        return table
+
+    async def _drop_table(self) -> None:
+        """Drop the table if it exists."""
+        if (client := await self.client(AWSClientType.GLUE)) is None:
+            raise RuntimeError("Cant connect to Glue")
+
+        try:
+            await client.delete_table(
+                DatabaseName=self.table.database,
+                Name=self.table.table_name,
+            )
+            logger.info(f"Table {self.table.table_name} dropped")
+        except client.exceptions.EntityNotFoundException:
+            logger.info(f"Table {self.table.table_name} does not exist")
+
+    async def _ensure_partition(
+        self,
+        partition_path: str,
+        partition_values: list[str],
+    ) -> None:
+        """Ensure partition exists, creating it if needed."""
+        if (client := await self.client(AWSClientType.GLUE)) is None:
+            raise RuntimeError("Cant connect to Glue")
+
+        try:
+            await client.get_partition(
+                DatabaseName=self.table.database,
+                TableName=self.table.table_name,
+                PartitionValues=partition_values,
+            )
+            logger.info(f"Partition {partition_path} found")
+            return
+        except client.exceptions.EntityNotFoundException:
+            logger.info(f"Partition {partition_path} not found, creating")
+
+            # Create partition with Parquet format configuration
+            storage_descriptor = {
+                "Location": partition_path,
+                "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+                "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+                "SerdeInfo": {
+                    "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe",
+                },
+            }
+
+            await client.create_partition(
+                DatabaseName=self.table.database,
+                TableName=self.table.table_name,
+                PartitionInput={
+                    "Values": partition_values,
+                    "StorageDescriptor": storage_descriptor,
+                },
+            )
+            logger.info(f"Partition {partition_path} created")
+
+    async def _write_to_s3(
+        self,
+        table: pa.Table,
+        key: str,
+    ) -> None:
+        """Write table to S3."""
+        if not self.session:
+            raise RuntimeError("Not connected to AWS")
+
+        # Get credentials from the session
+        credentials = await self.session.get_credentials()
+        if not credentials:
+            raise RuntimeError("No AWS credentials available")
+        frozen_creds = await credentials.get_frozen_credentials()
+
+        # Create S3 filesystem
+        fs = pa_fs.S3FileSystem(
+            access_key=frozen_creds.access_key,
+            secret_key=frozen_creds.secret_key,
+            session_token=frozen_creds.token,
+            region=self.config.region,
+        )
+
+        # Write to S3 with bucket name prefixed
+        pq.write_table(
+            table,
+            where=os.path.join(self.config.bucket_name, key),
+            filesystem=fs,
+            use_dictionary=False,
+            compression="snappy",
+        )
+
+    async def write(
+        self,
+        records: list[dict[str, type]],
+        model: type[BaseModel],
+        now: datetime | None = None,
+    ) -> None:
+        """Write records to S3 and update Glue catalog."""
+
+        if not records:
+            raise ValueError("No records to write")
+
+        if not now:
+            now = datetime.now()
+
+        # Get partition info
+        partition_values = [str(int(getattr(now, n))) for n in self.table.names]
+        base_path = os.path.join(
+            self.table.database,
+            self.table.table_name,
+        )
+        partition_path = os.path.join(
+            base_path,
+            *[f"{n}={v}" for n, v in zip(self.table.names, partition_values, strict=False)],
+        )
+
+        # Get schema from model
+        model_columns = TypeMap.model2athena(model)
+
+        # Get table schema
+        table = await self._get_or_create_table(
+            os.path.join(self.config.output_location, base_path), model_columns
+        )
+
+        data_columns = table["StorageDescriptor"]["Columns"]
+        partition_columns = table["PartitionKeys"]
+        columns = data_columns + partition_columns
+
+        logger.debug(f"Got schema: {json.dumps(columns, indent=2)}")
+
+        # Convert schema to PyArrow
+        schema = TypeMap.athena2pyarrow(columns)
+        table = pa.Table.from_pylist(records, schema=schema)
+
+        # Write to S3
+        s3_key = os.path.join(
+            partition_path,
+            f"{now:%s}.{self.config.target_format}",
+        )
+        logger.info(f"Writing to {os.path.join(self.config.bucket_name, s3_key)}")
+        await self._write_to_s3(
+            table=table,
+            key=s3_key,
+        )
+
+        # Update Glue catalog
+        try:
+            path = os.path.join(
+                self.config.output_location,
+                partition_path,
+            )
+            await self._ensure_partition(
+                partition_path=path,
+                partition_values=partition_values,
+            )
+        except Exception as e:
+            logger.error(f"Error checking/adding partition: {e}", exc_info=True)
+            raise RuntimeError("Failed to check/update partition") from e
+
+    async def _execute_query(self, query: str) -> str | None:
+        """Execute a query and wait for completion."""
         if (client := await self.client(AWSClientType.ATHENA)) is None:
-            raise RuntimeError("Cant connect to Athena")
+            raise RuntimeError("Cannot connect to Athena")
 
         response = await client.start_query_execution(
             QueryString=query,
@@ -90,204 +328,100 @@ class AWSConnector(ComponentFactory):
             WorkGroup=self.config.workgroup,
         )
         execution_id = response["QueryExecutionId"]
+        logger.info(f"Started Athena query with ID: {execution_id}")
 
-        try:
-            async with asyncio.timeout(self.config.timeout):
-                while True:
-                    status_response = await client.get_query_execution(
-                        QueryExecutionId=execution_id
+        async with asyncio.timeout(self.config.timeout):
+            while True:
+                status_response = await client.get_query_execution(QueryExecutionId=execution_id)
+                state = QueryState.from_response(status_response["QueryExecution"]["Status"])
+
+                if state in QueryState.terminal_states():
+                    if state == QueryState.SUCCEEDED:
+                        return execution_id
+
+                    error_info = status_response["QueryExecution"]["Status"]
+                    error_message = error_info.get("StateChangeReason", "Unknown error")
+                    error_state = error_info.get("State", "UNKNOWN")
+
+                    raise RuntimeError(
+                        f"Athena query failed with state: {error_state}. Error: {error_message}"
                     )
-                    state = QueryState.from_response(status_response["QueryExecution"]["Status"])
 
-                    if state in QueryState.terminal_states():
-                        if state == QueryState.SUCCEEDED:
-                            return execution_id
-                        error_message = status_response["QueryExecution"]["Status"].get(
-                            "StateChangeReason", "Unknown error"
-                        )
-                        raise RuntimeError(
-                            f"Query failed with state: {state}. Error: {error_message}"
-                        )
+                await asyncio.sleep(self.config.poll_interval)
 
-                    await asyncio.sleep(self.config.poll_interval)
-
-        except TimeoutError:
-            logger.error(f"Query timed out after {self.config.timeout} seconds")
-            return None
-
-    async def parse_results(
+    async def _parse_results(
         self,
         query_id: str,
-    ) -> AsyncIterator[dict[str, type] | None]:
+    ) -> AsyncIterator[dict[str, type]]:
         """Process rows from Athena response into records."""
 
         if (client := await self.client(AWSClientType.ATHENA)) is None:
             raise RuntimeError("Cant connect to Athena")
 
+        paginator = client.get_paginator("get_query_results")
+        col_names, col_types = [], []
+
+        async for page in paginator.paginate(QueryExecutionId=query_id):
+            results = page["ResultSet"]
+
+            if not col_names or not col_types:  # first page
+                if len(results["Rows"]) <= 1:  # Only header row present
+                    raise RuntimeError("Query returned no data rows")
+
+                col_names, col_types = await self._get_column_metadata(results)
+
+            for row in results["Rows"][1:]:
+                yield self._process_row(row["Data"], col_names, col_types)
+
+    async def _get_column_metadata(self, response: dict) -> tuple[list[str], list[str]]:
+        """Extract and validate column metadata from Athena response."""
+        metadata = response.get("ResultSetMetadata")
+        if not metadata:
+            logger.warning("No metadata in response")
+            return [], []
+
+        column_info = metadata.get("ColumnInfo", [])
+        if not column_info:
+            logger.warning("No columns in metadata")
+            return [], []
+
+        return zip(*[(col["Name"], col["Type"]) for col in column_info], strict=False)
+
+    def _process_row(
+        self, data: list[dict[str, type]], col_names: list[str], col_types: list[str]
+    ) -> dict:
+        """Process a single row of Athena results."""
         try:
-            async with asyncio.timeout(self.config.timeout):
-                response = await client.get_query_results(QueryExecutionId=query_id)
-                if not response["ResultSet"]["Rows"]:
-                    raise RuntimeError("Query returned no results")
-
-                # Get column names from the first row
-                header_row = response["ResultSet"]["Rows"][0]["Data"]
-                columns = []
-                for col in header_row:
-                    # Handle different possible formats of column data
-                    if isinstance(col, dict):
-                        columns.append(col.get("VarCharValue", ""))
-                    else:
-                        columns.append(str(col))
-
-                # Process each data row
-                for row in response["ResultSet"]["Rows"][1:]:  # Skip header row
-                    values = []
-                    for col in row["Data"]:
-                        if isinstance(col, dict):
-                            values.append(col.get("VarCharValue", ""))
-                        else:
-                            values.append(str(col))
-                    record = dict(zip(columns, values, strict=False))
-                    yield record
-
-        except TimeoutError:
-            logger.error(f"Result set timed out after {self.config.timeout} seconds")
-
-    async def _write_to_s3(
-        self,
-        records: list[dict[str, type]],
-        schema: pa.Schema,
-        file_name: str,
-    ) -> None:
-        """Write records to S3."""
-
-        if (client := await self.client(AWSClientType.S3)) is None:
-            raise RuntimeError("Cant connect to S3")
-
-        table = pa.Table.from_pylist(records, schema=schema)
-        output = pa.BufferOutputStream()
-        pq.write_table(table, output)
-        buffer = output.getvalue().to_pybytes()
-
-        await client.put_object(
-            Bucket=self.config.bucket_name,
-            Key=file_name,
-            Body=buffer,
-        )
-
-    async def _create_or_update(
-        self,
-        schema: dict[str, str],
-        base_dir: str,
-        partitions: dict[str, str],
-    ):
-        """create or update table"""
-        if (client := await self.client(AWSClientType.GLUE)) is None:
-            raise RuntimeError("Cant connect to Glue")
-
-        location = os.path.join(self.config.output_location, base_dir)
-        try:
-            await client.get_table(DatabaseName=self.config.database, Name=self.config.table_name)
-            logger.info("Table found, updating")
-            await client.update_table(
-                DatabaseName=self.config.database,
-                TableInput={
-                    "Name": self.config.table_name,
-                    "StorageDescriptor": {
-                        "Columns": schema,
-                        "Location": location,
-                    },
-                },
-            )
-        except client.exceptions.EntityNotFoundException:
-            logger.info("Table not found, creating")
-            table_input = {
-                "Name": self.config.table_name,
-                "DatabaseName": self.config.database,
-                "StorageDescriptor": {
-                    "Columns": schema,
-                    "Location": location,
-                },
-                "PartitionKeys": partitions,
-                "TableType": "EXTERNAL_TABLE",
-                "Parameters": {"classification": "parquet"},
+            return {
+                col_name: TypeMap.from_athena(col_type, data.get("VarCharValue"))
+                for col_name, col_type, data in zip(col_names, col_types, data, strict=False)
             }
-            await client.create_table(DatabaseName=self.config.database, TableInput=table_input)
+        except (KeyError, IndexError) as e:
+            logger.error(f"Malformed row data: {e}")
+            return {}
 
-    async def read(
-        self,
-    ) -> tuple[dict[str, type], dict[str, type]]:
-        """Execute a query and yield results."""
-
+    async def read(self) -> list[dict[str, type]]:
+        """Execute a query and return results."""
         if not self.config.source_query:
-            raise RuntimeError("Query not configured")
-        if not self.session:
-            raise RuntimeError("Not connected to AWS")
+            raise ValueError("Source query is required")
 
         # Execute query
         try:
-            execution_id = await self.execute_query(self.config.source_query)
+            execution_id = await self._execute_query(self.config.source_query)
+            if not execution_id:
+                raise RuntimeError("No query id received from Athena")
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"Athena query timed out after {self.config.timeout.total_seconds()} seconds"
+            ) from e
         except Exception as e:
-            raise RuntimeError("Error executing query") from e
+            raise RuntimeError(f"Failed to execute Athena query: {str(e)}") from e
 
-        if not execution_id:
-            raise RuntimeError("Not query id received")
-
-        logger.info(f"Query {execution_id} executed")
-
-        # Parse results
+        # Return results
         try:
-            async for header, *rows in self.parse_results(execution_id):
-                logger.info(f"Query returned {len(rows)} rows")
-                return header, rows
+            return [record async for record in self._parse_results(execution_id)]
         except Exception as e:
-            raise RuntimeError("Error retrieving query results") from e
-
-    async def write(
-        self,
-        records: list[dict[str, type]],
-        output_format: type[BaseModel],
-        partitions: dict[str, type] | None = None,
-    ) -> None:
-        """Write records to S3 and ensure table exists."""
-
-        if not self.session:
-            raise RuntimeError("Not connected to AWS")
-
-        if not records:
-            raise RuntimeError("No records to write")
-
-        if partitions is None:
-            partitions = {
-                "year": int,
-                "month": int,
-                "day": int,
-            }
-
-        now = datetime.now()
-        base_dir = _get_partition_path(now, partitions)
-        file_name = os.path.join(base_dir, f"{now:%S}.{self.config.target_format}")
-
-        pydantic_schema = TypeConverter.pydantic2py(output_format)
-
-        # write
-        pa_schema = TypeConverter.py2pa(pydantic_schema)
-        try:
-            await self._write_to_s3(records, pa_schema, file_name)
-            logger.info(f"Wrote {len(records)} records to {base_dir}")
-        except Exception as e:
-            logger.error(f"Error writing output: {e}", exc_info=True)
-            raise
-
-        # # create or update table
-        # glue_schema = TypeConverter.py2glue(pydantic_schema)
-        # try:
-        #     await self._create_or_update(glue_schema, base_dir, partitions)
-        #     logger.info("Table created/updated")
-        # except Exception as e:
-        #     logger.error(f"Error creating/updating table: {e}", exc_info=True)
-        #     raise
+            raise RuntimeError(f"Failed to parse Athena query results: {str(e)}") from e
 
     async def __aenter__(self) -> AWSConnector:
         """Async context manager entry."""

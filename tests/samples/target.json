@@ -1,0 +1,14 @@
+[
+    {
+        "sentiment": "positive",
+        "score": 0.9,
+        "impact": 0.9,
+        "confidence": 0.9
+    },
+    {
+        "sentiment": "negative",
+        "score": -0.9,
+        "impact": -0.9,
+        "confidence": 0.9
+    }
+]

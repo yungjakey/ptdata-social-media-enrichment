@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+from datetime import datetime
 
 import tenacity
 from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.common.component import ComponentFactory
 
@@ -18,14 +20,34 @@ from .config import InferenceConfig
 logger = logging.getLogger(__name__)
 
 
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 class InferenceClient(ComponentFactory):
     """Manages inference client configuration."""
 
     _config = InferenceConfig
 
+    @classmethod
+    def from_config(cls, config: dict[str, type]) -> InferenceClient:
+        if not config.get("api_key"):
+            config["api_key"] = os.getenv("OPENAI_API_KEY")
+        if not config.get("api_base"):
+            config["api_base"] = os.getenv("OPENAI_API_BASE")
+
+        return super().from_config(config)
+
     def __init__(self, config: InferenceConfig) -> None:
         """Initialize client."""
         super().__init__(config)
+
+        if not config.api_key or not config.api_base:
+            raise ValueError("OPENAI_API_KEY and OPENAI_API_BASE must be set")
+
         self.model: type[BaseModel] = self.config.response_format
         self._client: AsyncAzureOpenAI | None = None
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.workers)
@@ -72,14 +94,16 @@ class InferenceClient(ComponentFactory):
 
         async with self._semaphore:
             sysmsg = self.model.get_prompt()
-            usrmsg = json.dumps(record)
+            usrmsg = json.dumps(record, indent=2, default=json_serial)
 
             messages = [
                 {"role": "system", "content": sysmsg},
                 {"role": "user", "content": usrmsg},
             ]
 
-            logger.debug(f"Processing messages: {json.dumps(messages, indent=2)}")
+            logger.debug(
+                f"Processing messages: {json.dumps(messages, indent=2, default=json_serial)}"
+            )
             completion: ChatCompletion = await self.client.beta.chat.completions.parse(
                 messages=messages,
                 response_format=self.model,
@@ -104,8 +128,8 @@ class InferenceClient(ComponentFactory):
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type(RateLimitError),
-        wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
-        stop=tenacity.stop_after_attempt(3),
+        wait=tenacity.wait_exponential(multiplier=2, min=5, max=60),
+        stop=tenacity.stop_after_attempt(10),
         reraise=True,
     )
     async def process_batch(self, records: list[dict[str, type]]) -> list[dict[str, type]]:
@@ -126,6 +150,8 @@ class InferenceClient(ComponentFactory):
 
         results = []
         for i, o in zip(records, responses, strict=False):
+            now = datetime.now()
+
             if isinstance(o, Exception):
                 logger.error(f"Error processing record: {str(o)}")
                 continue
@@ -133,8 +159,19 @@ class InferenceClient(ComponentFactory):
                 logger.warning("Null record returned")
                 continue
 
-            r = {**i, **o}
+            try:
+                self.model.model_validate(o)
+            except ValidationError as e:
+                logger.error(f"Error validating response: {e}")
+                continue
+
+            r = {
+                **i,
+                **o,
+                "processed_at": now.isoformat(),
+            }
+
             results.append(r)
-            logger.info(f"Processing record: {json.dumps(r, indent=2)}")
+            logger.info(f"Processing record: {json.dumps(r, indent=2, default=json_serial)}")
 
         return results
