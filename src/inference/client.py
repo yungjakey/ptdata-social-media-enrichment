@@ -159,7 +159,6 @@ class InferenceClient(ComponentFactory):
             }
 
             results.append(r)
-            logger.info(f"Processing record: {json.dumps(r, indent=2, cls=DateTimeEncoder)}")
 
         return results
 

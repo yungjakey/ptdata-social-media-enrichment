@@ -7,9 +7,33 @@ from enum import Enum
 from typing import Any, ClassVar
 
 import pyarrow as pa
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+QUERY_TEMPLATE = """
+CREATE TABLE IF NOT EXISTS {{ table_name }} (
+    {% for column in columns %}
+        {{ column.name }} {{ column.type }},
+    {% endfor %}
+    processed_at TIMESTAMP
+)
+PARTITIONED BY
+    (
+        {% for partition in partitions %}
+            {{ partition.name }}(processed_at),
+        {% endfor %}
+    )
+LOCATION '{{ output_location }}'
+TBLPROPERTIES (
+    'table_type' = 'ICEBERG',
+    'format' = 'PARQUET',
+    'write_compression' = 'snappy',
+    'vacuum_min_snapshots_to_keep' = '10',
+    'vacuum_max_snapshot_age_seconds' = '604800'
+)
+"""
 
 
 @dataclass
@@ -86,7 +110,7 @@ class TypeMap:
                 return date.fromisoformat(value)
             return py_type(value)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Failed to convert {value} to {py_type}: {e}")
+            raise ValueError(f"Failed to convert {value} to {py_type}: {e}") from e
 
     @classmethod
     def model2athena(cls, model: BaseModel) -> list[dict[str, str]]:
@@ -100,19 +124,15 @@ class TypeMap:
         ]
 
     @classmethod
-    def athena2pyarrow(cls, columns: list[dict[str, str]]) -> pa.Schema:
-        """Convert Athena columns to PyArrow schema."""
-        fields = []
-        for col in columns:
-            name = col["Name"]
-            sql_type = col["Type"]
-            py_type = cls.sql2py(sql_type)
-            pa_type = cls.py2pa(py_type)
-
-            fields.append(pa.field(name, pa_type, nullable=True))
-            logger.debug(f"Converting {name}: SQL={sql_type}, Python={py_type}, PyArrow={pa_type}")
-
-        return pa.schema(fields)
+    def model2iceberg(cls, model: BaseModel) -> list[dict[str, str]]:
+        """Convert Pydantic model fields to Iceberg columns."""
+        return [
+            {
+                "name": name,
+                "type": cls.py2sql(field.annotation),
+            }
+            for name, field in model.model_fields.items()
+        ]
 
 
 class QueryState(str, Enum):

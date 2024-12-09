@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -11,20 +10,18 @@ from datetime import datetime
 from enum import Enum
 
 import aioboto3
+import jinja2
 import pyarrow as pa
-import pyarrow.fs as pa_fs
-import pyarrow.parquet as pq
 from pydantic import BaseModel
+from pyiceberg.catalog import Catalog
+from pyiceberg.table import Table
 
 from src.common.component import ComponentFactory
 
 from .config import AWSConnectorConfig
-from .utils import QueryState, TypeMap
+from .utils import QUERY_TEMPLATE, QueryState, TypeMap
 
 logger = logging.getLogger(__name__)
-
-# TODO: fix this abomination
-HEX_FIELDS = {"id", "date_key", "channel_key", "post_key"}
 
 
 class AWSClientType(str, Enum):
@@ -50,6 +47,10 @@ class AWSConnector(ComponentFactory):
         super().__init__(config)
         self.session: aioboto3.Session | None = None
         self.table = self.config.table_config
+        self.catalog = Catalog.load(self.config.table.database)
+        self.iceberg_table: Table = self.catalog.load_table(
+            f"{self.config.table.database}.{self.config.table.table_name}"
+        )
 
     async def client(self, c: AWSClientType) -> aioboto3.Client:
         """Lazy load client."""
@@ -110,122 +111,12 @@ class AWSConnector(ComponentFactory):
             logger.error(f"Error listing S3 files: {e}")
             raise RuntimeError("Failed to list S3 files") from e
 
-    async def _get_or_create_table(
-        self,
-        base_path: str,
-        model_columns: list[dict[str, str]],
-    ) -> dict[str, type]:
-        """Get or create table and return its schema."""
-
-        if (client := await self.client(AWSClientType.GLUE)) is None:
-            raise RuntimeError("Cant connect to Glue")
-
-        # Ensure database exists
-        try:
-            await client.get_database(Name=self.table.database)
-            logger.debug(f"Database {self.table.database} found")
-        except client.exceptions.EntityNotFoundException as e:
-            logger.error(f"Database {self.table.database} not found")
-            raise RuntimeError("Database not found") from e
-
-        # check table
-        try:
-            table = await client.get_table(
-                DatabaseName=self.table.database,
-                Name=self.table.table_name,
-            )
-            logger.info(f"Table {self.table.table_name} found")
-        except client.exceptions.EntityNotFoundException:
-            logger.info(f"Table {self.table.table_name} not found, creating")
-
-            # Create storage descriptor for table
-            storage_descriptor = {
-                "Columns": model_columns,
-                "Location": base_path,
-                "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
-                "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
-                "SerdeInfo": {
-                    "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe",
-                },
-            }
-
-            await client.create_table(
-                DatabaseName=self.table.database,
-                TableInput={
-                    "Name": self.table.table_name,
-                    "StorageDescriptor": storage_descriptor,
-                    "PartitionKeys": self.table.partition_keys,
-                },
-            )
-
-            # Construct table definition since create_table returns empty response
-            table = {
-                "StorageDescriptor": storage_descriptor,
-                "PartitionKeys": self.table.partition_keys,
-            }
-
-        return table
-
-    async def _drop_table(self) -> None:
-        """Drop the table if it exists."""
-        if (client := await self.client(AWSClientType.GLUE)) is None:
-            raise RuntimeError("Cant connect to Glue")
-
-        try:
-            await client.delete_table(
-                DatabaseName=self.table.database,
-                Name=self.table.table_name,
-            )
-            logger.info(f"Table {self.table.table_name} dropped")
-        except client.exceptions.EntityNotFoundException:
-            logger.info(f"Table {self.table.table_name} does not exist")
-
-    async def _ensure_partition(
-        self,
-        partition_path: str,
-        partition_values: list[str],
-    ) -> None:
-        """Ensure partition exists, creating it if needed."""
-        if (client := await self.client(AWSClientType.GLUE)) is None:
-            raise RuntimeError("Cant connect to Glue")
-
-        try:
-            await client.get_partition(
-                DatabaseName=self.table.database,
-                TableName=self.table.table_name,
-                PartitionValues=partition_values,
-            )
-            logger.info(f"Partition {partition_path} found")
-            return
-        except client.exceptions.EntityNotFoundException:
-            logger.info(f"Partition {partition_path} not found, creating")
-
-            # Create partition with Parquet format configuration
-            storage_descriptor = {
-                "Location": partition_path,
-                "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
-                "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
-                "SerdeInfo": {
-                    "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe",
-                },
-            }
-
-            await client.create_partition(
-                DatabaseName=self.table.database,
-                TableName=self.table.table_name,
-                PartitionInput={
-                    "Values": partition_values,
-                    "StorageDescriptor": storage_descriptor,
-                },
-            )
-            logger.info(f"Partition {partition_path} created")
-
     async def _write_to_s3(
         self,
         table: pa.Table,
         key: str,
     ) -> None:
-        """Write table to S3."""
+        """Write table to S3 using Iceberg format."""
         if not self.session:
             raise RuntimeError("Not connected to AWS")
 
@@ -233,24 +124,10 @@ class AWSConnector(ComponentFactory):
         credentials = await self.session.get_credentials()
         if not credentials:
             raise RuntimeError("No AWS credentials available")
-        frozen_creds = await credentials.get_frozen_credentials()
 
-        # Create S3 filesystem
-        fs = pa_fs.S3FileSystem(
-            access_key=frozen_creds.access_key,
-            secret_key=frozen_creds.secret_key,
-            session_token=frozen_creds.token,
-            region=self.config.region,
-        )
-
-        # Write to S3 with bucket name prefixed
-        pq.write_table(
-            table,
-            where=os.path.join(self.config.bucket_name, key),
-            filesystem=fs,
-            use_dictionary=False,
-            compression="snappy",
-        )
+        # Write data to Iceberg table
+        self.iceberg_table.append(table.to_pandas())
+        logger.info(f"Data written to Iceberg table: {self.iceberg_table}")
 
     async def write(
         self,
@@ -269,58 +146,34 @@ class AWSConnector(ComponentFactory):
             now = datetime.now()
 
         # Get partition info
-        partition_values = [str(int(getattr(now, n))) for n in self.table.names]
         base_path = os.path.join(
             self.table.database,
             self.table.table_name,
         )
         partition_path = os.path.join(
             base_path,
-            *[f"{n}={v}" for n, v in zip(self.table.names, partition_values, strict=False)],
+            *[f"{k}={getattr(now, k)}" for k in self.table.partitions],
         )
-
-        # Get schema from model
-        model_columns = TypeMap.model2athena(model)
-
-        # Get table schema
-        table = await self._get_or_create_table(
-            os.path.join(self.config.output_location, base_path), model_columns
-        )
-
-        data_columns = table["StorageDescriptor"]["Columns"]
-        partition_columns = table["PartitionKeys"]
-        columns = data_columns + partition_columns
-
-        logger.debug(f"Got schema: {json.dumps(columns, indent=2)}")
-
-        # Convert schema to PyArrow
-        schema = TypeMap.athena2pyarrow(columns)
-        table = pa.Table.from_pylist(records, schema=schema)
-
-        # Write to S3
         s3_key = os.path.join(
             partition_path,
             f"{now:%s}.{self.config.target_format}",
         )
-        logger.info(f"Writing to {os.path.join(self.config.bucket_name, s3_key)}")
+
+        # Create iceberg table
+        ice_schema = TypeMap.model2iceberg(model)
+        await self.create_table(
+            columns=ice_schema,
+            partitions=self.table.partitions,
+            output_location=base_path,
+        )
+
+        # Write to S3
+        pa_schema = TypeMap.model2athena(model)
+        table = pa.Table.from_pylist(records, schema=pa_schema)
         await self._write_to_s3(
             table=table,
             key=s3_key,
         )
-
-        # Update Glue catalog
-        try:
-            path = os.path.join(
-                self.config.output_location,
-                partition_path,
-            )
-            await self._ensure_partition(
-                partition_path=path,
-                partition_values=partition_values,
-            )
-        except Exception as e:
-            logger.error(f"Error checking/adding partition: {e}", exc_info=True)
-            raise RuntimeError("Failed to check/update partition") from e
 
     async def _execute_query(self, query: str) -> str | None:
         """Execute a query and wait for completion."""
@@ -409,8 +262,6 @@ class AWSConnector(ComponentFactory):
 
     async def read(self) -> list[dict[str, type]]:
         """Execute a query and return results."""
-        if not self.config.source_query:
-            raise ValueError("Source query is required")
 
         # Execute query
         try:
@@ -429,6 +280,21 @@ class AWSConnector(ComponentFactory):
             return [record async for record in self._parse_results(execution_id)]
         except Exception as e:
             raise RuntimeError(f"Failed to parse Athena query results: {str(e)}") from e
+
+    async def create_table(
+        self, columns: list[dict], partitions: list[dict], output_location: str
+    ) -> None:
+        """Create a table using the Iceberg format."""
+
+        template = jinja2.Template(QUERY_TEMPLATE)
+        sql = template.render(
+            table_name=f"{self.config.table.database}.{self.config.table.table_name}",
+            columns=columns,
+            partitions=partitions,
+            output_location=output_location,
+        )
+        await self._execute_query(sql)
+        logger.info(f"Created table with SQL: {sql}")
 
     async def __aenter__(self) -> AWSConnector:
         """Async context manager entry."""

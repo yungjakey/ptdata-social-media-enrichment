@@ -31,7 +31,7 @@ if DEBUG:
     SOURCE = str(Path(__file__).parent.parent.parent / "samples" / "source.json")
     TARGET = str(Path(__file__).parent.parent.parent / "samples" / "target.json")
 
-    def read_debug_data(path: str) -> list[dict[str, any]]:
+    def read_debug_data(path) -> list[dict[str, any]]:
         with open(path) as f:
             return json.load(f)
 
