@@ -82,7 +82,6 @@ class AWSConnectorConfig(BaseConfig):
         default="parquet",
         description="Target format for output files",
     )
-
     bucket_name: str = Field(
         ...,
         description="S3 bucket name",

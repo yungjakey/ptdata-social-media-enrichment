@@ -12,6 +12,17 @@ from src.common.config import BaseConfig
 class InferenceConfig(BaseConfig):
     """Inference configuration."""
 
+    # creds
+    api_key: str | None = Field(
+        default=...,
+        description="API key",
+    )
+    api_base: str | None = Field(
+        default=...,
+        description="API base URL",
+    )
+
+    # basic
     provider: str = Field(
         default="azure",
         description="Inference provider",
@@ -29,21 +40,29 @@ class InferenceConfig(BaseConfig):
         description="API engine",
     )
 
-    api_key: str | None = Field(
-        default=...,
-        description="API key",
-    )
-    api_base: str | None = Field(
-        default=...,
-        description="API base URL",
-    )
-
+    # orchestration
     workers: int = Field(
-        description="Number of workers",
+        description="Number of concurrent workers",
         ge=1,
         le=50,
         default=1,
     )
+    timestamp_field: str | None = Field(
+        default="processed_at",
+        description="Field to use as timestamp",
+    )
+
+    # data integration
+    exclude_fields: list[str] = Field(
+        default_factory=list,
+        description="Fields to exclude from LLM processing",
+    )
+    join_fields: list[str] = Field(
+        default_factory=list,
+        description="Fields of input to join with results",
+    )
+
+    # inference
     response_format: type[BaseModel] | str = Field(
         ...,
         description="Response format",
@@ -57,15 +76,6 @@ class InferenceConfig(BaseConfig):
             return getattr(mod, v.capitalize())
         except (ImportError, AttributeError) as e:
             raise ValueError(f"Invalid response format: {v}") from e
-
-    exclude_fields: list[str] = Field(
-        default_factory=list,
-        description="Fields to exclude from LLM processing",
-    )
-    join_fields: list[str] = Field(
-        default_factory=list,
-        description="Fields to join with newline",
-    )
 
     temperature: float = Field(
         default=0.7,

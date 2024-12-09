@@ -155,7 +155,7 @@ class InferenceClient(ComponentFactory):
             r = {
                 **{k: v for k, v in i.items() if k in self.config.join_fields},
                 **o,
-                "processed_at": now.isoformat(),
+                self.config.timestamp_field: now.isoformat(),
             }
 
             results.append(r)

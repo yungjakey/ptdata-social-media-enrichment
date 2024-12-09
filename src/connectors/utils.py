@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, Optional
 
 import pyarrow as pa
 from pydantic import BaseModel
+from pyiceberg.partitioning import PartitionField, PartitionSpec
+from pyiceberg.schema import Schema
+from pyiceberg.types import (
+    BinaryType,
+    BooleanType,
+    DateType,
+    DoubleType,
+    LongType,
+    NestedField,
+    StringType,
+    TimestampType,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +36,7 @@ PARTITIONED BY (
     {%- endfor %}
 )
 {%- endif %}
-LOCATION '{{ output_location }}' 
+LOCATION '{{ output_location }}'
 TBLPROPERTIES (
     'table_type' = 'ICEBERG',
     'format' = 'PARQUET',
@@ -36,44 +47,22 @@ TBLPROPERTIES (
 """
 
 
-@dataclass
-class TypeMap:
-    """Type mapping between PyArrow, Python, and SQL types."""
+class IcebergConverter:
+    """Converter for Pydantic models to various data formats including Iceberg."""
 
-    name: str
-    sql: str
-    pa: pa.DataType
-    py: type
-    value: Any | None = None  # data value
-
-    # Type mappings
-    PY_TO_SQL: ClassVar[dict[type, str]] = {
-        # Partition types
-        int: "bigint",  # Default to bigint for integers
+    PY_TO_SQL = {
+        int: "bigint",
         str: "string",
-        # Non-partition types
         float: "double",
         bool: "boolean",
         datetime: "timestamp",
         date: "date",
         bytes: "binary",
     }
-    SQL_TO_PY: ClassVar[dict[str, type]] = {
-        # Partition types
-        "int": int,
-        "string": str,
-        # Non-partition types
-        "double": float,
-        "boolean": bool,
-        "timestamp": datetime,
-        "date": date,
-        "binary": bytes,
-    }
-    PY_TO_PA: ClassVar[dict[type, pa.DataType]] = {
-        # Partition types
-        int: pa.int64(),  # Use int16 for partition integers
+
+    PY_TO_PA = {
+        int: pa.int64(),
         str: pa.string(),
-        # Non-partition types
         float: pa.float64(),
         bool: pa.bool_(),
         datetime: pa.timestamp("us"),
@@ -81,61 +70,123 @@ class TypeMap:
         bytes: pa.binary(),
     }
 
-    @classmethod
-    def py2sql(cls, py_type: type) -> str:
-        """Convert Python type to SQL type."""
-        return cls.PY_TO_SQL.get(py_type, "string")
+    PY_TO_ICEBERG = {
+        bool: BooleanType(),
+        str: StringType(),
+        int: LongType(),
+        float: DoubleType(),
+        datetime: TimestampType(),
+        date: DateType(),
+        bytes: BinaryType(),
+    }
 
-    @classmethod
-    def py2pa(cls, py_type: type) -> pa.DataType:
-        """Convert Python type to PyArrow type."""
-        return cls.PY_TO_PA.get(py_type, pa.string())
+    SQL_TO_PY = {
+        "int": int,
+        "bigint": int,
+        "string": str,
+        "double": float,
+        "boolean": bool,
+        "timestamp": datetime,
+        "date": date,
+        "binary": bytes,
+    }
 
-    @classmethod
-    def sql2py(cls, sql_type: str) -> type:
-        """Convert SQL type to Python type."""
-        return cls.SQL_TO_PY.get(sql_type.lower(), str)
+    def __init__(
+        self,
+        model: type[BaseModel],
+        datetime_field: str,
+        partition_transforms: list[str],
+    ):
+        self.model = model
+        self._datetime_field = datetime_field
+        self._partition_transforms = partition_transforms
 
-    @classmethod
-    def sql2pa(cls, sql_type: str) -> pa.DataType:
-        """Convert SQL type to PyArrow type."""
-        return cls.py2pa(cls.sql2py(sql_type))
+    def _get_field_type(self, field_type: type, type_mapping: dict) -> Any:
+        """Get the corresponding type from a mapping, handling Optional types."""
+        # Handle Optional types
+        origin = getattr(field_type, "__origin__", None)
+        if origin is Optional:
+            field_type = field_type.__args__[0]
+        return type_mapping.get(field_type, type_mapping[str])  # Default to string type
 
-    @classmethod
-    def from_athena(cls, sql_type: str, value: str | None) -> Any:
-        """Convert Athena value to Python type."""
-        if not value:
-            return None
+    def to_iceberg_schema(self) -> Schema:
+        """Convert to Iceberg schema."""
+        fields = []
 
-        py_type = cls.sql2py(sql_type)
-        try:
-            if py_type == datetime:
-                return datetime.fromisoformat(value)
-            if py_type == date:
-                return date.fromisoformat(value)
-            return py_type(value)
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Failed to convert {value} to {py_type}: {e}") from e
+        # Add model fields
+        for idx, (name, field) in enumerate(self.model.model_fields.items(), start=1):
+            field_type = field.annotation
+            required = field.is_required()
 
-    @classmethod
-    def model2athena(cls, model: BaseModel) -> list[dict[str, str]]:
-        """Convert Pydantic model fields to Athena columns."""
-        return [
+            # Handle Optional types
+            if hasattr(field_type, "__origin__") and field_type.__origin__ is Optional:
+                field_type = field_type.__args__[0]
+                required = False
+
+            iceberg_type = self._get_field_type(field_type, self.PY_TO_ICEBERG)
+            fields.append(NestedField(idx, name, iceberg_type, required=required))
+
+        # Add timestamp field if not present
+        if self._datetime_field and self._datetime_field not in self.model.model_fields:
+            fields.append(
+                NestedField(len(fields) + 1, self._datetime_field, TimestampType(), required=True)
+            )
+
+        return Schema(*fields)
+
+    def to_partition_spec(self, schema: Schema) -> PartitionSpec:
+        """Create partition spec on the datetime field."""
+        if not self._datetime_field:
+            return PartitionSpec()  # Empty partition spec if no datetime field
+
+        field_id = next(f.field_id for f in schema.fields if f.name == self._datetime_field)
+        return PartitionSpec(
+            *[
+                PartitionField(
+                    source_id=field_id,
+                    field_id=len(schema.fields) + idx + 1,
+                    transform=transform,
+                    name=transform,
+                )
+                for idx, transform in enumerate(self._partition_transforms)
+            ]
+        )
+
+    def to_arrow_schema(self) -> pa.Schema:
+        """Convert to PyArrow schema."""
+        fields = []
+
+        # Add model fields
+        for name, field in self.model.model_fields.items():
+            pa_type = self._get_field_type(field.annotation, self.PY_TO_PA)
+            fields.append(pa.field(name, pa_type, nullable=not field.is_required()))
+
+        # Add timestamp field if not present
+        if self._datetime_field and self._datetime_field not in self.model.model_fields:
+            fields.append(pa.field(self._datetime_field, pa.timestamp("us"), nullable=False))
+
+        return pa.schema(fields)
+
+    def to_athena_columns(self) -> list[dict[str, str]]:
+        """Convert to Athena columns."""
+        columns = [
             {
                 "Name": name,
-                "Type": cls.py2sql(field.annotation),
+                "Type": self._get_field_type(field.annotation, self.PY_TO_SQL),
             }
-            for name, field in model.model_fields.items()
+            for name, field in self.model.model_fields.items()
         ]
 
+        # Add timestamp column if not present
+        if self._datetime_field and self._datetime_field not in self.model.model_fields:
+            columns.append({"Name": self._datetime_field, "Type": "timestamp"})
+
+        return columns
+
     @classmethod
-    def model2arrow(cls, model: BaseModel) -> pa.Schema:
-        """Convert Pydantic model fields to PyArrow schema."""
-        fields = []
-        for name, field in model.model_fields.items():
-            pa_type = cls.py2pa(field.annotation)
-            fields.append(pa.field(name, pa_type, nullable=True))
-        return pa.schema(fields)
+    def athena2py(cls, athena_type: str) -> type:
+        """Convert Athena type to Python type."""
+        return cls.SQL_TO_PY.get(athena_type.lower(), str)
 
 
 class QueryState(str, Enum):

@@ -11,15 +11,16 @@ from enum import Enum
 from typing import Literal
 
 import aioboto3
-import jinja2
 import pyarrow as pa
 from pydantic import BaseModel
 from pyiceberg.catalog import load_catalog
+from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.table import Table
 
 from src.common.component import ComponentFactory
 
 from .config import AWSConnectorConfig
-from .utils import QUERY_TEMPLATE, QueryState, TypeMap
+from .utils import IcebergConverter, QueryState
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,17 @@ class AWSConnector(ComponentFactory):
         super().__init__(config)
         self.session: aioboto3.Session | None = None
         self.table = self.config.table_config
-        self.catalog = load_catalog(
-            type="glue",
-            uri=f"glue://{self.config.region}/",
-        )
+        try:
+            self.catalog = load_catalog(
+                type="glue",
+                uri=f"glue://{self.config.region}/{self.table.database}",
+                warehouse=self.table.location,
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to load Glue catalog: {e}. Make sure AWS SSO credentials are valid."
+            )
+            raise
 
     async def client(self, c: AWSClientType) -> aioboto3.Client:
         """Lazy load client."""
@@ -90,6 +98,7 @@ class AWSConnector(ComponentFactory):
 
     async def list(self, prefix: str) -> list[dict[str, any]]:
         """List files in the configured table location."""
+
         if (client := await self.client(AWSClientType.S3)) is None:
             raise RuntimeError("Cant connect to S3")
 
@@ -110,6 +119,25 @@ class AWSConnector(ComponentFactory):
             logger.error(f"Error listing S3 files: {e}")
             raise RuntimeError("Failed to list S3 files") from e
 
+    async def _get_or_create_table(self, converter: IcebergConverter) -> Table:
+        try:
+            return self.catalog.load_table(f"{self.table.database}.{self.table.table_name}")
+        except NoSuchTableError:
+            # Table doesn't exist, create it
+            iceberg_schema = converter.to_iceberg_schema()
+            partition_transforms = converter.get_partition_transforms()
+
+        return self.catalog.create_table(
+            identifier=f"{self.table.database}.{self.table.table_name}",
+            schema=iceberg_schema,
+            partition_spec=partition_transforms,
+            location=self.table.location,
+            properties={
+                "write.format.default": "parquet",
+                "write.metadata.compression-codec": "gzip",
+            },
+        )
+
     async def write(
         self,
         records: list[dict[str, type]],
@@ -124,55 +152,41 @@ class AWSConnector(ComponentFactory):
         if not now:
             now = datetime.now()
 
-        # Get partition info
-        base_path = os.path.join(
-            self.config.output_location,
-            self.table.database,
-            self.table.table_name,
+        # Create converter
+        converter = (
+            IcebergConverter(model)
+            .add_partitions(self.table.partitions)
+            .set_datetime_field(self.table.datetime_field)
         )
 
-        # Create iceberg table if not exists and add partition_field
-        partition_field = [
-            {"Name": PARTITION_FIELD, "Type": "timestamp"},
-        ]
-        partition_schema = [
-            {"Name": f"{PARTITION_FIELD}_{n}", "Type": t}
-            for n, t in zip(self.table.names, self.table.types, strict=False)
-        ]
-        ice_schema = TypeMap.model2athena(model) + partition_field + partition_schema
-        await self.create_table(
-            columns=ice_schema,
-            output_location=base_path,
-            partitions=[f["Name"] for f in partition_schema],
-        )
+        # Get or create table using Iceberg catalog
+        try:
+            iceberg_table = await self._get_or_create_table(converter)
+        except Exception as e:
+            raise RuntimeError(f"Failed to get or create Iceberg table: {str(e)}") from e
 
-        # Write to Iceberg
-        pa_schema = TypeMap.model2arrow(model)
+        # Convert records to PyArrow table
+        pa_schema = converter.to_arrow_schema()
         table = pa.Table.from_pylist(records, schema=pa_schema)
-        table = table.append_column(
-            PARTITION_FIELD,
-            pa.array(
-                [now] * len(records),
-                type=pa.timestamp(),
-            ),
-            inplace=True,
-        )
-        for c in partition_schema:
-            n, t = c["Name"], c["Type"]
-            table = table.append_column(
-                n,
-                pa.array(
-                    [getattr(now, n)] * len(records),
-                    type=TypeMap.sql2pa(t),
-                ),
-            )
 
-        iceberg_table = self.catalog.load_table(f"{self.table.database}.{self.table.table_name}")
-        iceberg_table.append(table.to_pandas())
-        logger.info(f"Data written to Iceberg table: {iceberg_table}")
+        # Verify datetime field is not already in the records
+        timestamp_array = pa.array([now] * len(records), type=pa.timestamp("us"))
+        if self.table.datetime_field in table.column_names:
+            logger.warning(
+                f"Overriding datetime field '{self.table.datetime_field}' as it is already in the records"
+            )
+            table = table.remove_column(self.table.datetime_field)
+        table = table.append_column(self.table.datetime_field, timestamp_array)
+
+        # Write data using Iceberg table
+        try:
+            iceberg_table.append(table)
+        except Exception as e:
+            raise RuntimeError(f"Failed to append data to Iceberg table: {str(e)}") from e
 
     async def _execute_query(self, query: str) -> str | None:
         """Execute a query and wait for completion."""
+
         if (client := await self.client(AWSClientType.ATHENA)) is None:
             raise RuntimeError("Cannot connect to Athena")
 
@@ -205,6 +219,40 @@ class AWSConnector(ComponentFactory):
 
                 await asyncio.sleep(self.config.poll_interval)
 
+    async def _process_row(
+        self,
+        records: list[dict[str, any]],
+        col_names: list[str],
+        col_types: list[str],
+    ) -> dict[str, type]:
+        res = {}
+        for col_name, athena_type, data in zip(col_names, col_types, records, strict=False):
+            athena_val = data.get("VarCharValue")
+            if athena_val is None:
+                res[col_name] = None
+                continue
+
+            py_type = IcebergConverter.athena2py(athena_type)
+            py_val = py_type(athena_val) if athena_val else None
+
+            res[col_name] = py_val
+
+        return res
+
+    async def _get_column_metadata(self, response: dict) -> tuple[list[str], list[str]]:
+        """Extract and validate column metadata from Athena response."""
+        metadata = response.get("ResultSetMetadata")
+        if not metadata:
+            logger.warning("No metadata in response")
+            return [], []
+
+        column_info = metadata.get("ColumnInfo", [])
+        if not column_info:
+            logger.warning("No columns in metadata")
+            return [], []
+
+        return zip(*[(col["Name"], col["Type"]) for col in column_info], strict=False)
+
     async def _parse_results(
         self,
         query_id: str,
@@ -221,40 +269,15 @@ class AWSConnector(ComponentFactory):
             results = page["ResultSet"]
 
             if not col_names or not col_types:  # first page
-                if len(results["Rows"]) <= 1:  # Only header row present
-                    logger.info("Query returned no data rows, yielding nothing.")
-                    return  # Simply exit the generator gracefully without yielding anything
                 col_names, col_types = await self._get_column_metadata(results)
 
+                if len(results["Rows"]) <= 1:  # Only header row present
+                    logger.info("Query returned no data rows, yielding nothing.")
+                    return
+
             for row in results["Rows"][1:]:
-                yield self._process_row(row["Data"], col_names, col_types)
-
-    async def _get_column_metadata(self, response: dict) -> tuple[list[str], list[str]]:
-        """Extract and validate column metadata from Athena response."""
-        metadata = response.get("ResultSetMetadata")
-        if not metadata:
-            logger.warning("No metadata in response")
-            return [], []
-
-        column_info = metadata.get("ColumnInfo", [])
-        if not column_info:
-            logger.warning("No columns in metadata")
-            return [], []
-
-        return zip(*[(col["Name"], col["Type"]) for col in column_info], strict=False)
-
-    def _process_row(
-        self, data: list[dict[str, type]], col_names: list[str], col_types: list[str]
-    ) -> dict:
-        """Process a single row of Athena results."""
-        try:
-            return {
-                col_name: TypeMap.from_athena(col_type, data.get("VarCharValue"))
-                for col_name, col_type, data in zip(col_names, col_types, data, strict=False)
-            }
-        except (KeyError, IndexError) as e:
-            logger.error(f"Malformed row data: {e}")
-            return {}
+                res = self._process_row(row["Data"], col_names, col_types)
+                yield res
 
     async def read(self) -> list[dict[str, type]]:
         """Execute a query and return results."""
@@ -266,35 +289,16 @@ class AWSConnector(ComponentFactory):
                 raise RuntimeError("No query id received from Athena")
         except TimeoutError as e:
             raise RuntimeError(
-                f"Athena query timed out after {self.config.timeout.total_seconds()} seconds"
+                f"Query timed out after {self.config.timeout.total_seconds()}s"
             ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to execute Athena query: {str(e)}") from e
+            raise RuntimeError(f"Failed to execute query: {str(e)}") from e
 
         # Return results
         try:
-            return [record async for record in self._parse_results(execution_id)]
+            return [res async for res in self._parse_results(execution_id)]
         except Exception as e:
             raise RuntimeError(f"Failed to parse Athena query results: {str(e)}") from e
-
-    async def create_table(
-        self,
-        columns: list[dict],
-        output_location: str,
-        partitions: list[dict[str, str]],
-    ) -> None:
-        """Create a table using the Iceberg format."""
-
-        template = jinja2.Template(QUERY_TEMPLATE)
-        sql = template.render(
-            table_name=f"{self.table.database}.{self.table.table_name}",
-            columns=columns,
-            partitions=partitions,
-            output_location=output_location,
-        )
-        logger.info(f"Creating table with SQL: {sql}")
-        await self._execute_query(sql)
-        logger.info(f"Created table with SQL: {sql}")
 
     async def __aenter__(self) -> AWSConnector:
         """Async context manager entry."""

@@ -17,7 +17,8 @@ connector:
         Type: int
       - Name: day
         Type: int
-
+    datetime_field: written_at
+    
 inference:
   workers: 20
   response_format: sentiment
@@ -33,3 +34,4 @@ inference:
     - image_link
   join_fields:
     - post_key
+  datetime_field: processed_at
