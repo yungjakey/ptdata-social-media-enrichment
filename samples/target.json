@@ -1,0 +1,82 @@
+[
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.7,
+    "sentiment": "positive",
+    "confidence": 0.9,
+    "processed_at": "2024-12-09T15:00:11.056577"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.9,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.056953"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.8,
+    "sentiment": "positive",
+    "confidence": 0.9,
+    "processed_at": "2024-12-09T15:00:11.057078"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.7,
+    "sentiment": "positive",
+    "confidence": 0.9,
+    "processed_at": "2024-12-09T15:00:11.057175"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.9,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057264"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.9,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057354"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.7,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057593"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.85,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057758"
+  },
+  {
+    "post_key": "bb c1 12 de 9d f6 70 7a fe 44 26 01 f9 f1 b7 ce",
+    "score": 0.8,
+    "impact": 0.9,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057874"
+  },
+  {
+    "post_key": "a3 c2 0a a0 ed 3d e3 63 c2 08 db f7 b4 1c 1e 44",
+    "score": 0.9,
+    "impact": 0.8,
+    "sentiment": "positive",
+    "confidence": 0.95,
+    "processed_at": "2024-12-09T15:00:11.057965"
+  }
+]

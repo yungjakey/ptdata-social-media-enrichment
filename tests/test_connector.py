@@ -56,10 +56,6 @@ async def test_connector() -> None:
     }
 
     async with AWSConnector.from_config(config) as connector:
-        # Drop table if it exists
-        logger.info("Dropping table if it exists...")
-        await connector._drop_table()
-
         # Test writing to S3 and Glue
         logger.info("Testing write to S3.")
         await connector.write(mock_data, MockRecord)
@@ -82,6 +78,10 @@ async def test_connector() -> None:
 
         for r in results:
             logger.info(json.dumps(r, indent=2))
+
+        # Drop table
+        logger.info("Dropping table...")
+        await connector._drop_table()
 
 
 if __name__ == "__main__":

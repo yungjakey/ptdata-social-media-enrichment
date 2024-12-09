@@ -35,6 +35,9 @@ class AWSClientType(str, Enum):
     GLUE = "glue"
 
 
+# TODO: Refactor as Step Function!
+
+
 class AWSConnector(ComponentFactory):
     """AWS connector implementation."""
 
@@ -43,12 +46,14 @@ class AWSConnector(ComponentFactory):
 
     def __init__(self, config: AWSConnectorConfig) -> None:
         """Initialize AWS connector."""
+
         super().__init__(config)
         self.session: aioboto3.Session | None = None
         self.table = self.config.table_config
 
     async def client(self, c: AWSClientType) -> aioboto3.Client:
         """Lazy load client."""
+
         if not self.session:
             raise RuntimeError("Not connected to AWS")
 
@@ -255,6 +260,8 @@ class AWSConnector(ComponentFactory):
     ) -> None:
         """Write records to S3 and update Glue catalog."""
 
+        # TODO: Change to Iceberg format
+
         if not records:
             raise ValueError("No records to write")
 
@@ -366,8 +373,8 @@ class AWSConnector(ComponentFactory):
 
             if not col_names or not col_types:  # first page
                 if len(results["Rows"]) <= 1:  # Only header row present
-                    raise RuntimeError("Query returned no data rows")
-
+                    logger.info("Query returned no data rows, yielding nothing.")
+                    return  # Simply exit the generator gracefully without yielding anything
                 col_names, col_types = await self._get_column_metadata(results)
 
             for row in results["Rows"][1:]:

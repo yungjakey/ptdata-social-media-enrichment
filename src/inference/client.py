@@ -13,18 +13,12 @@ from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, ValidationError
 
+from src.common import DateTimeEncoder
 from src.common.component import ComponentFactory
 
 from .config import InferenceConfig
 
 logger = logging.getLogger(__name__)
-
-
-def json_serial(obj):
-    """JSON serializer for objects not serializable by default json code."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    raise TypeError(f"Type {type(obj)} not serializable")
 
 
 class InferenceClient(ComponentFactory):
@@ -77,24 +71,18 @@ class InferenceClient(ComponentFactory):
         except Exception as e:
             logger.debug(f"Error closing client: {e}")
 
-    async def __aenter__(self) -> InferenceClient:
-        """Async context manager entry."""
-
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit, cleanup resources."""
-        # Wait for all pending tasks to complete
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        await self.close()
-
+    @tenacity.retry(
+        retry=tenacity.retry_if_exception_type(RateLimitError),
+        wait=tenacity.wait_exponential(multiplier=1, min=2, max=30),
+        stop=tenacity.stop_after_attempt(5),
+        reraise=True,
+    )
     async def _process_record(self, record: dict[str, type]) -> dict[str, type]:
         """Process single record with rate limiting."""
 
         async with self._semaphore:
             sysmsg = self.model.get_prompt()
-            usrmsg = json.dumps(record, indent=2, default=json_serial)
+            usrmsg = json.dumps(record, indent=2, cls=DateTimeEncoder)
 
             messages = [
                 {"role": "system", "content": sysmsg},
@@ -102,7 +90,7 @@ class InferenceClient(ComponentFactory):
             ]
 
             logger.debug(
-                f"Processing messages: {json.dumps(messages, indent=2, default=json_serial)}"
+                f"Processing messages: {json.dumps(messages, indent=2, cls=DateTimeEncoder)}"
             )
             completion: ChatCompletion = await self.client.beta.chat.completions.parse(
                 messages=messages,
@@ -112,7 +100,6 @@ class InferenceClient(ComponentFactory):
                 max_tokens=self.config.max_tokens,
                 n=1,
             )
-
             logger.debug(f"Completion object: {completion}")
 
             if ((choice := completion.choices) is None) or (len(choice) == 0):
@@ -126,12 +113,6 @@ class InferenceClient(ComponentFactory):
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
 
-    @tenacity.retry(
-        retry=tenacity.retry_if_exception_type(RateLimitError),
-        wait=tenacity.wait_exponential(multiplier=2, min=5, max=60),
-        stop=tenacity.stop_after_attempt(10),
-        reraise=True,
-    )
     async def process_batch(self, records: list[dict[str, type]]) -> list[dict[str, type]]:
         """Process a batch of records."""
 
@@ -140,6 +121,12 @@ class InferenceClient(ComponentFactory):
             if not isinstance(record, dict):
                 logger.warning(f"Skipping non-dict record: {record}")
                 continue
+
+            record = {
+                k: v
+                for k, v in record.items()
+                if v is not None and k not in self.config.exclude_fields
+            }
             tasks.append(self._process_record(record))
 
         if not tasks:
@@ -166,12 +153,24 @@ class InferenceClient(ComponentFactory):
                 continue
 
             r = {
-                **i,
+                **{k: v for k, v in i.items() if k in self.config.join_fields},
                 **o,
                 "processed_at": now.isoformat(),
             }
 
             results.append(r)
-            logger.info(f"Processing record: {json.dumps(r, indent=2, default=json_serial)}")
+            logger.info(f"Processing record: {json.dumps(r, indent=2, cls=DateTimeEncoder)}")
 
         return results
+
+    async def __aenter__(self) -> InferenceClient:
+        """Async context manager entry."""
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit, cleanup resources."""
+        # Wait for all pending tasks to complete
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self.close()

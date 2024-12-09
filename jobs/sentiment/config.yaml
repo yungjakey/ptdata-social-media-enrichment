@@ -1,0 +1,35 @@
+connector:
+  bucket_name: orf-tmp
+  source_query: |  
+    SELECT p.*, r.*
+    FROM prod_gold.fact_social_media_reaction_post r
+    JOIN prod_gold.dim_post_details p ON r.post_key = p.post_key
+    WHERE r.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' HOUR
+    AND p.last_update_time >= CURRENT_TIMESTAMP - INTERVAL '1' HOUR
+    LIMIT 10
+  table_config:
+    database: dev_test
+    table_name: some_ai_test
+    partitions: # athena types
+      - Name: year
+        Type: int
+      - Name: month
+        Type: int
+      - Name: day
+        Type: int
+
+inference:
+  workers: 20
+  response_format: sentiment
+  exclude_fields:  # Fields to exclude from LLM processing
+    - id  
+    - post_key
+    - hashtag_key
+    - date_key
+    - channel_key
+    - last_update_time  
+    - post_attachment_name  
+    - post_link
+    - image_link
+  join_fields:
+    - post_key

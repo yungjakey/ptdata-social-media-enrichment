@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -6,7 +8,9 @@ class Sentiment(BaseModel):
 
     score: float = Field(..., description="Sentiment score")
     impact: float = Field(..., description="Post impact")
-    sentiment: str = Field(..., description="Analysis summary")
+    sentiment: Literal["positive", "negative", "neutral"] = Field(
+        ..., description="Analysis summary"
+    )
     confidence: float = Field(..., description="Analysis confidence")
 
     @staticmethod

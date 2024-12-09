@@ -46,6 +46,15 @@ class InferenceConfig(BaseConfig):
         except (ImportError, AttributeError) as e:
             raise ValueError(f"Invalid response format: {v}") from e
 
+    exclude_fields: list[str] = Field(
+        default_factory=list,
+        description="Fields to exclude from LLM processing",
+    )
+    join_fields: list[str] = Field(
+        default_factory=list,
+        description="Fields to join with newline",
+    )
+
     temperature: float = Field(
         default=0.7,
         description="Sampling temperature",
