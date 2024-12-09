@@ -8,13 +8,13 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 import aioboto3
 import jinja2
 import pyarrow as pa
 from pydantic import BaseModel
-from pyiceberg.catalog import Catalog
-from pyiceberg.table import Table
+from pyiceberg.catalog import load_catalog
 
 from src.common.component import ComponentFactory
 
@@ -23,6 +23,8 @@ from .utils import QUERY_TEMPLATE, QueryState, TypeMap
 
 logger = logging.getLogger(__name__)
 
+PARTITION_FIELD: Literal = "written_at"
+
 
 class AWSClientType(str, Enum):
     """Enum for AWS client types."""
@@ -30,9 +32,6 @@ class AWSClientType(str, Enum):
     S3 = "s3"
     ATHENA = "athena"
     GLUE = "glue"
-
-
-# TODO: Refactor as Step Function!
 
 
 class AWSConnector(ComponentFactory):
@@ -47,9 +46,9 @@ class AWSConnector(ComponentFactory):
         super().__init__(config)
         self.session: aioboto3.Session | None = None
         self.table = self.config.table_config
-        self.catalog = Catalog.load(self.config.table.database)
-        self.iceberg_table: Table = self.catalog.load_table(
-            f"{self.config.table.database}.{self.config.table.table_name}"
+        self.catalog = load_catalog(
+            type="glue",
+            uri=f"glue://{self.config.region}/",
         )
 
     async def client(self, c: AWSClientType) -> aioboto3.Client:
@@ -111,24 +110,6 @@ class AWSConnector(ComponentFactory):
             logger.error(f"Error listing S3 files: {e}")
             raise RuntimeError("Failed to list S3 files") from e
 
-    async def _write_to_s3(
-        self,
-        table: pa.Table,
-        key: str,
-    ) -> None:
-        """Write table to S3 using Iceberg format."""
-        if not self.session:
-            raise RuntimeError("Not connected to AWS")
-
-        # Get credentials from the session
-        credentials = await self.session.get_credentials()
-        if not credentials:
-            raise RuntimeError("No AWS credentials available")
-
-        # Write data to Iceberg table
-        self.iceberg_table.append(table.to_pandas())
-        logger.info(f"Data written to Iceberg table: {self.iceberg_table}")
-
     async def write(
         self,
         records: list[dict[str, type]],
@@ -136,8 +117,6 @@ class AWSConnector(ComponentFactory):
         now: datetime | None = None,
     ) -> None:
         """Write records to S3 and update Glue catalog."""
-
-        # TODO: Change to Iceberg format
 
         if not records:
             raise ValueError("No records to write")
@@ -147,33 +126,50 @@ class AWSConnector(ComponentFactory):
 
         # Get partition info
         base_path = os.path.join(
+            self.config.output_location,
             self.table.database,
             self.table.table_name,
         )
-        partition_path = os.path.join(
-            base_path,
-            *[f"{k}={getattr(now, k)}" for k in self.table.partitions],
-        )
-        s3_key = os.path.join(
-            partition_path,
-            f"{now:%s}.{self.config.target_format}",
-        )
 
-        # Create iceberg table
-        ice_schema = TypeMap.model2iceberg(model)
+        # Create iceberg table if not exists and add partition_field
+        partition_field = [
+            {"Name": PARTITION_FIELD, "Type": "timestamp"},
+        ]
+        partition_schema = [
+            {"Name": f"{PARTITION_FIELD}_{n}", "Type": t}
+            for n, t in zip(self.table.names, self.table.types, strict=False)
+        ]
+        ice_schema = TypeMap.model2athena(model) + partition_field + partition_schema
         await self.create_table(
             columns=ice_schema,
-            partitions=self.table.partitions,
             output_location=base_path,
+            partitions=[f["Name"] for f in partition_schema],
         )
 
-        # Write to S3
-        pa_schema = TypeMap.model2athena(model)
+        # Write to Iceberg
+        pa_schema = TypeMap.model2arrow(model)
         table = pa.Table.from_pylist(records, schema=pa_schema)
-        await self._write_to_s3(
-            table=table,
-            key=s3_key,
+        table = table.append_column(
+            PARTITION_FIELD,
+            pa.array(
+                [now] * len(records),
+                type=pa.timestamp(),
+            ),
+            inplace=True,
         )
+        for c in partition_schema:
+            n, t = c["Name"], c["Type"]
+            table = table.append_column(
+                n,
+                pa.array(
+                    [getattr(now, n)] * len(records),
+                    type=TypeMap.sql2pa(t),
+                ),
+            )
+
+        iceberg_table = self.catalog.load_table(f"{self.table.database}.{self.table.table_name}")
+        iceberg_table.append(table.to_pandas())
+        logger.info(f"Data written to Iceberg table: {iceberg_table}")
 
     async def _execute_query(self, query: str) -> str | None:
         """Execute a query and wait for completion."""
@@ -282,17 +278,21 @@ class AWSConnector(ComponentFactory):
             raise RuntimeError(f"Failed to parse Athena query results: {str(e)}") from e
 
     async def create_table(
-        self, columns: list[dict], partitions: list[dict], output_location: str
+        self,
+        columns: list[dict],
+        output_location: str,
+        partitions: list[dict[str, str]],
     ) -> None:
         """Create a table using the Iceberg format."""
 
         template = jinja2.Template(QUERY_TEMPLATE)
         sql = template.render(
-            table_name=f"{self.config.table.database}.{self.config.table.table_name}",
+            table_name=f"{self.table.database}.{self.table.table_name}",
             columns=columns,
             partitions=partitions,
             output_location=output_location,
         )
+        logger.info(f"Creating table with SQL: {sql}")
         await self._execute_query(sql)
         logger.info(f"Created table with SQL: {sql}")
 

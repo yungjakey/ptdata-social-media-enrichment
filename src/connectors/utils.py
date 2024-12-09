@@ -14,18 +14,18 @@ logging.basicConfig(level=logging.INFO)
 
 QUERY_TEMPLATE = """
 CREATE TABLE IF NOT EXISTS {{ table_name }} (
-    {% for column in columns %}
-        {{ column.name }} {{ column.type }},
-    {% endfor %}
-    processed_at TIMESTAMP
+    {%- for column in columns %}
+    {{ column.Name }} {{ column.Type }}{% if not loop.last %},{% endif %}
+    {%- endfor %}
 )
-PARTITIONED BY
-    (
-        {% for partition in partitions %}
-            {{ partition.name }}(processed_at),
-        {% endfor %}
-    )
-LOCATION '{{ output_location }}'
+{%- if partitions %}
+PARTITIONED BY (
+    {%- for partition in partitions %}
+    {{ partition }}{% if not loop.last %},{% endif %}
+    {%- endfor %}
+)
+{%- endif %}
+LOCATION '{{ output_location }}' 
 TBLPROPERTIES (
     'table_type' = 'ICEBERG',
     'format' = 'PARQUET',
@@ -87,14 +87,19 @@ class TypeMap:
         return cls.PY_TO_SQL.get(py_type, "string")
 
     @classmethod
+    def py2pa(cls, py_type: type) -> pa.DataType:
+        """Convert Python type to PyArrow type."""
+        return cls.PY_TO_PA.get(py_type, pa.string())
+
+    @classmethod
     def sql2py(cls, sql_type: str) -> type:
         """Convert SQL type to Python type."""
         return cls.SQL_TO_PY.get(sql_type.lower(), str)
 
     @classmethod
-    def py2pa(cls, py_type: type) -> pa.DataType:
-        """Convert Python type to PyArrow type."""
-        return cls.PY_TO_PA.get(py_type, pa.string())
+    def sql2pa(cls, sql_type: str) -> pa.DataType:
+        """Convert SQL type to PyArrow type."""
+        return cls.py2pa(cls.sql2py(sql_type))
 
     @classmethod
     def from_athena(cls, sql_type: str, value: str | None) -> Any:
@@ -124,15 +129,13 @@ class TypeMap:
         ]
 
     @classmethod
-    def model2iceberg(cls, model: BaseModel) -> list[dict[str, str]]:
-        """Convert Pydantic model fields to Iceberg columns."""
-        return [
-            {
-                "name": name,
-                "type": cls.py2sql(field.annotation),
-            }
-            for name, field in model.model_fields.items()
-        ]
+    def model2arrow(cls, model: BaseModel) -> pa.Schema:
+        """Convert Pydantic model fields to PyArrow schema."""
+        fields = []
+        for name, field in model.model_fields.items():
+            pa_type = cls.py2pa(field.annotation)
+            fields.append(pa.field(name, pa_type, nullable=True))
+        return pa.schema(fields)
 
 
 class QueryState(str, Enum):

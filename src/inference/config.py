@@ -12,10 +12,22 @@ from src.common.config import BaseConfig
 class InferenceConfig(BaseConfig):
     """Inference configuration."""
 
-    provider: str = "azure"
-    version: str = "2024-08-01-preview"
-    deployment: str = "gpt-4o"
-    engine: str = "gpt-4o"
+    provider: str = Field(
+        default="azure",
+        description="Inference provider",
+    )
+    version: str = Field(
+        default="2024-08-01-preview",
+        description="API version",
+    )
+    deployment: str = Field(
+        default="gpt-4o",
+        description="API deployment",
+    )
+    engine: str = Field(
+        default="gpt-4o",
+        description="API engine",
+    )
 
     api_key: str | None = Field(
         default=...,
