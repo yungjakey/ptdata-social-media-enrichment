@@ -1,72 +1,148 @@
 # AWS Connectors
 
-This directory contains the AWS integration code for interacting with AWS Glue and Athena services. The main component is the `AWSConnector` class which handles data writing to S3 and table management in Glue.
+This module implements AWS data integration using Apache Iceberg for table management and PyArrow for efficient data handling.
 
-## AWS Glue Integration
+## Core Components
 
-The connector manages Glue tables with the following specifications:
+### `AWSConnector` (`client.py`)
+- Asynchronous AWS integration using aioboto3
+- Apache Iceberg table management via pyiceberg
+- PyArrow-based data processing
+- Concurrent source table reading
+- Incremental processing support
 
-### Table Configuration
-- **Table Type**: `EXTERNAL_TABLE` - Tables point to external S3 data
-- **File Format**: Parquet
-- **SerDe**: Uses Hive Parquet SerDe (`org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe`)
-- **Partitioning**: Supports dynamic partitioning with default time-based partitions (year/month/day)
+### `IcebergConverter` (`utils.py`)
+- Converts between Pydantic models and Iceberg schemas
+- Handles type mappings (Python → Iceberg → PyArrow)
+- Supports partitioning specifications
+- Manages schema evolution
 
-### Schema Handling
-- Data columns and partition columns are managed separately in the Glue table definition
-- Schema types are automatically converted from Python/Pydantic types to Glue-compatible types
-- Partitions are defined in the `PartitionKeys` field of the table definition
-- Main data columns are defined in the `StorageDescriptor.Columns` field
+## Features
 
-### Table Operations
-- Tables are automatically created if they don't exist
-- Existing tables are updated with the new schema and configuration if they exist
-- Both create and update operations use the same table input format for consistency
+### Incremental Processing
+```python
+async def read(self, drop: bool = False) -> pa.Table:
+    # Get records from source tables
+    tables = await self._get_source_records()
+    
+    # Get already processed records
+    processed = await self._get_processed_records()
+    
+    # Filter each source table
+    filtered_tables = []
+    for table, source_config in zip(tables, self.config.source.tables):
+        # Only keep records where source datetime > target datetime
+        # ...
+```
 
-## AWS Athena Integration
+### Type Conversion
+```python
+class IcebergConverter:
+    PY_TO_ICEBERG = {
+        bool: BooleanType(),
+        str: StringType(),
+        int: LongType(),
+        float: DoubleType(),
+        datetime: TimestampType(),
+        date: DateType(),
+        bytes: BinaryType(),
+    }
 
-The connector supports querying data through Athena with the following features:
+    PA_TO_PY = {
+        pa.int64(): int,
+        pa.string(): str,
+        pa.float64(): float,
+        pa.bool_(): bool,
+        pa.timestamp("us"): datetime,
+        # ...
+    }
+```
 
-### Query Execution
-- Asynchronous query execution using Athena API
-- Results are automatically paginated and parsed
-- Supports both DDL and DML queries
+### Configuration
 
-### Data Types
-- Query results are automatically converted from Athena types to Python types
-- Complex types (arrays, structs) are supported through the type conversion system
+```yaml
+connector:
+  region: eu-central-1
+  warehouse: my_warehouse
+  
+  source:
+    tables:
+      - database: source_db
+        table: source_table
+        index_field: id
+        datetime_field: updated_at
+    time_filter_hours: 24
+    max_records: 1000
+    
+  target:
+    database: target_db
+    table: target_table
+    index_field: id
+    datetime_field: processed_at
+    location: s3://bucket/path
+    partition_by: 
+      - year
+      - month
+      - day
+```
 
 ## Usage Example
 
 ```python
-connector = AWSConnector(config)
-await connector.connect()
-
-# Write data with automatic table creation
-await connector.write(
-    records=data,
-    response_format=MyPydanticModel,
-    database="my_database",
-    table_name="my_table"
-)
-
-# Query data
-columns, rows = await connector.read()
+async with AWSConnector(config) as connector:
+    # Read from source tables with incremental processing
+    records = await connector.read()
+    
+    # Write to target table with schema evolution
+    await connector.write(
+        records=processed_records,
+        model=MyPydanticModel
+    )
 ```
 
-## Important Notes
+## Key Features
 
-1. **Partitioning**: 
-   - Default partitioning is by year/month/day
-   - Custom partition schemas can be provided during write operations
-   - Partition values are automatically extracted from the data
+### Credential Management
+- Uses AWS credential chain
+- Supports Lambda execution role
+- Local development via AWS SSO
 
-2. **Schema Evolution**:
-   - Table schemas are updated automatically when new columns are added
-   - Existing column types cannot be changed (AWS Glue limitation)
-   - Partition columns cannot be modified after table creation
+### Table Management
+- Automatic table creation
+- Schema evolution support
+- Partition management
+- Location management
 
-3. **Performance**:
-   - Uses Parquet format for optimal query performance
-   - Tables are configured for Hive-style partitioning
-   - Athena queries are executed with parallel processing enabled
+### Data Processing
+- Concurrent source table reading
+- Incremental processing
+- PyArrow-based operations
+- Efficient joins and filters
+
+### Error Handling
+- Table existence checks
+- Schema validation
+- Type conversion safety
+- Detailed logging
+
+## Best Practices
+
+1. **Configuration**
+   - Define appropriate time windows
+   - Set reasonable record limits
+   - Use meaningful partition keys
+
+2. **Performance**
+   - Enable concurrent reading
+   - Use efficient filtering
+   - Optimize partition strategy
+
+3. **Data Quality**
+   - Validate schemas
+   - Handle type conversions
+   - Track processing timestamps
+
+4. **Resource Management**
+   - Use async context managers
+   - Clean up connections
+   - Monitor memory usage

@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
-Description: Social Media Analytics Enrichment Lambda Function
+Description: Social Media Analytics Enrichment Lambda Functions
 
 Parameters:
   Environment:
@@ -12,9 +12,10 @@ Parameters:
       - prod
     Description: Environment name
 
-  SecretArn:
+  OpenAISecretName:
     Type: String
-    Description: ARN of the secret containing OpenAI credentials
+    Default: ptdata/openai
+    Description: Name of the secret containing OpenAI credentials
 
   LogRetentionDays:
     Type: Number
@@ -24,55 +25,55 @@ Parameters:
 Globals:
   Function:
     Timeout: 900  # 15 minutes
-    MemorySize: 512
+    MemorySize: 1024
     Runtime: python3.12
     Environment:
       Variables:
         ENVIRONMENT: !Ref Environment
+        OPENAI_SECRET_NAME: !Ref OpenAISecretName
+        PYTHONPATH: /var/task:/var/task/src
     Tags:
       Environment: !Ref Environment
       Service: social-media-enrichment
 
 Resources:
-  SocialMediaEnrichmentFunction:
+  SentimentAnalysisFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/
-      Handler: main.lambda_handler
-      Description: Processes social media data using OpenAI
+      CodeUri: .
+      Handler: handler.lambda_handler
+      Description: Processes social media data for sentiment analysis
       Policies:
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
-              Resource: !Ref SecretArn
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*'
             - Effect: Allow
               Action:
-                - rds-data:ExecuteStatement
-                - rds-data:BatchExecuteStatement
-              Resource: '*'  # Scope this down to specific RDS ARN in production
+                - glue:*
+                - s3:*
+              Resource: '*'
       Events:
-        HourlySchedule:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            Path: /sentiment
+            Method: POST
+            PayloadFormatVersion: '2.0'
+        Schedule:
           Type: Schedule
           Properties:
             Schedule: rate(1 hour)
-            Name: SocialMediaEnrichmentSchedule
-            Description: Run social media enrichment every hour
+            Name: SentimentAnalysisSchedule
+            Description: Run sentiment analysis every hour
             Enabled: true
       LoggingConfig:
         LogGroup:
           RetentionInDays: !Ref LogRetentionDays
 
 Outputs:
-  FunctionName:
-    Description: Lambda function name
-    Value: !Ref SocialMediaEnrichmentFunction
-
-  FunctionArn:
-    Description: Lambda function ARN
-    Value: !GetAtt SocialMediaEnrichmentFunction.Arn
-
-  LogGroupName:
-    Description: CloudWatch Logs group name
-    Value: !Sub /aws/lambda/${SocialMediaEnrichmentFunction}
+  SentimentAnalysisApi:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/sentiment

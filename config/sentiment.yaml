@@ -23,7 +23,7 @@ connector:
     index_field: post_key
     location: s3://aws-orf-social-media-analytics/dev/test/fact/social_media_sentiment
     partition_by:
-      - year
+      - month
 
 inference:
   workers: 20

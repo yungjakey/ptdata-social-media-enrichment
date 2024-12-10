@@ -1,0 +1,20 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /sentiment",
+  "rawPath": "/sentiment",
+  "rawQueryString": "drop=false",
+  "queryStringParameters": {
+    "drop": "false"
+  },
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/sentiment",
+      "protocol": "HTTP/1.1"
+    },
+    "requestId": "test-request-id",
+    "stage": "$default"
+  },
+  "isBase64Encoded": false
+}
+

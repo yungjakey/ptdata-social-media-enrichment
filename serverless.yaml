@@ -1,0 +1,49 @@
+service: ptdata-social-media-enrichment
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: eu-central-1
+  memorySize: 1024
+  timeout: 900  # 15 minutes
+  environment:
+    OPENAI_SECRET_NAME: ${env:OPENAI_SECRET_NAME, 'ptdata/openai'}
+    PYTHONPATH: /var/task:/var/task/src
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - glue:*
+            - s3:*
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource: 
+            - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${env:OPENAI_SECRET_NAME, 'ptdata/openai'}*
+
+package:
+  patterns:
+    - '!.venv/**'
+    - '!.git/**'
+    - '!__pycache__/**'
+    - '!node_modules/**'
+    - '!.pytest_cache/**'
+    - '!tests/**'
+    - '!*.pyc'
+    - '!.env'
+    - '!.gitignore'
+    - '!README.md'
+    - '!.aws-sam/**'
+    - '!template.yaml'
+
+functions:
+  sentiment-analysis:
+    handler: handler
+    events:
+      - httpApi:
+          path: /sentiment
+          method: post

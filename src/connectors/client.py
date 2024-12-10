@@ -27,6 +27,7 @@ class AWSConnector(ComponentFactory):
         super().__init__(config)
         self._session = None
         self._catalog = None
+        self.cutoff_time = datetime.now() - timedelta(hours=self.config.source.time_filter_hours)
 
     @property
     def session(self) -> aioboto3.Session:
@@ -76,19 +77,13 @@ class AWSConnector(ComponentFactory):
 
         # Create mapping of index -> processed_at
         logger.debug(f"Target table schema: {df.schema}")
-        try:
-            index_col = df[self.config.target.index_field]
-            datetime_col = df[self.config.target.datetime_field]
+        index_col = df[self.config.target.index_field]
+        datetime_col = df[self.config.target.datetime_field]
 
-            # Log some sample timestamps for debugging
-            sample_size = min(5, len(datetime_col))
-            sample_times = [str(dt) for dt in datetime_col[:sample_size]]
-            logger.debug(f"Sample timestamps from target: {sample_times}")
-
-        except KeyError as e:
-            raise KeyError(
-                f"Could not find index field '{self.config.target.index_field}' in target table"
-            ) from e
+        # Log some sample timestamps for debugging
+        sample_size = min(5, len(datetime_col))
+        sample_times = [str(dt) for dt in datetime_col[:sample_size]]
+        logger.debug(f"Sample timestamps from target: {sample_times}")
 
         processed = {
             idx: datetime.fromisoformat(str(dt))
@@ -105,12 +100,7 @@ class AWSConnector(ComponentFactory):
             catalog = await self.catalog
             table = catalog.load_table((source.database, source.table))
 
-            # Get total count first
-            total_df = table.scan().to_arrow()
-            logger.info(f"Total records in {source.table}: {len(total_df)}")
-
             # Filter by datetime field using scan API
-            logger.debug(f"Source cutoff time: {self.cutoff_time.isoformat()}")
             df = table.scan(
                 row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
                 limit=self.config.source.max_records,
@@ -119,13 +109,6 @@ class AWSConnector(ComponentFactory):
             logger.info(
                 f"Records after time filter in {source.table}: {len(df)} (cutoff: {self.cutoff_time.isoformat()})"
             )
-
-            if len(df) > 0:
-                # Log some sample timestamps for debugging
-                sample_size = min(5, len(df))
-                sample_times = [str(dt) for dt in df[source.datetime_field][:sample_size]]
-                logger.debug(f"Sample timestamps from source {source.table}: {sample_times}")
-
             return df
         except Exception as e:
             logger.error(f"Error reading source table {source.table}: {e}")
@@ -133,18 +116,9 @@ class AWSConnector(ComponentFactory):
 
     async def _get_source_records(self) -> list[pa.Table]:
         """Get records from source tables concurrently."""
-        tables = []
-        self.cutoff_time = datetime.now() - timedelta(hours=self.config.source.time_filter_hours)
-
-        # Create tasks for all source tables
         tasks = [self._get_source_table(source) for source in self.config.source.tables]
-
-        # Wait for all tables to be read
         results = await asyncio.gather(*tasks)
-
-        # Filter out None results from failed reads
         tables = [table for table in results if table is not None]
-
         return tables
 
     async def drop_target_table(self) -> None:
@@ -166,13 +140,13 @@ class AWSConnector(ComponentFactory):
         if not tables:
             return pa.Table.from_pylist([])
 
-        # Get already processed records from target table
-        processed = await self._get_processed_records()
+        # Get mapping of index keys to last processing time in target table
+        source_dt = await self._get_processed_records()
 
         # Filter each source table before joining
         filtered_tables = []
         for table, source_config in zip(tables, self.config.source.tables, strict=False):
-            if processed:
+            if source_dt:
                 index_col = table[source_config.index_field]
                 datetime_col = table[source_config.datetime_field]
 
@@ -182,8 +156,8 @@ class AWSConnector(ComponentFactory):
 
                 # Only keep records where source datetime > target datetime
                 keep_indices = []
-                for idx, dt in zip(indices, datetimes, strict=False):
-                    if idx not in processed or dt > processed[idx]:
+                for idx, target_dt in zip(indices, datetimes, strict=False):
+                    if idx not in source_dt or target_dt > source_dt[idx]:
                         keep_indices.append(True)
                     else:
                         keep_indices.append(False)
@@ -249,9 +223,3 @@ class AWSConnector(ComponentFactory):
 
         # Write records to table
         table.append(records)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
