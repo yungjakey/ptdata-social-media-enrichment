@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import aioboto3
 import pyarrow as pa
+import pyarrow.compute as pc
 from pydantic import BaseModel
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NoSuchTableError
@@ -66,58 +67,63 @@ class AWSConnector(ComponentFactory):
             return {}
 
         # Only look at records within our time window
-        logger.debug(f"Cutoff time: {self.cutoff_time.isoformat()}")
-        df = table.scan(
-            row_filter=f"{self.config.target.datetime_field} >= '{self.cutoff_time.isoformat()}'",
-        ).to_arrow()
+        df = (
+            table.scan(
+                row_filter=f"{self.config.target.datetime_field} >= '{self.cutoff_time.isoformat()}'",
+            )
+            .to_arrow()
+            .sort_by([(self.config.target.datetime_field, "descending")])
+        )
 
         if len(df) == 0:
             logger.debug("No records found in time window")
             return {}
 
         # Create mapping of index -> processed_at
-        logger.debug(f"Target table schema: {df.schema}")
-        index_col = df[self.config.target.index_field]
-        datetime_col = df[self.config.target.datetime_field]
+        try:
+            processed = dict(
+                zip(
+                    df[self.config.target.index_field].to_pylist(),
+                    df[self.config.target.datetime_field].to_pylist(),
+                    strict=False,
+                )
+            )
+            logger.info(
+                f"Found {len(processed)} previously processed records in {self.config.target.table} after {self.cutoff_time.isoformat()}"
+            )
 
-        # Log some sample timestamps for debugging
-        sample_size = min(5, len(datetime_col))
-        sample_times = [str(dt) for dt in datetime_col[:sample_size]]
-        logger.debug(f"Sample timestamps from target: {sample_times}")
+            return processed
 
-        processed = {
-            idx: datetime.fromisoformat(str(dt))
-            for idx, dt in zip(index_col.to_pylist(), datetime_col.to_pylist(), strict=False)
-        }
-        logger.debug(f"Found {len(processed)} previously processed records in time window")
+        except Exception as e:
+            logger.error(
+                f"Error getting last processed records from {self.config.target.table}: {e}"
+            )
+            return {}
 
-        return processed
-
-    async def _get_source_table(self, source) -> pa.Table | None:
+    async def _get_source_table(self, idx: int) -> pa.Table | None:
         """Get records from a single source table."""
         try:
-            # Load table using (database, table) tuple
+            source = self.config.source.tables[idx]
             catalog = await self.catalog
             table = catalog.load_table((source.database, source.table))
 
-            # Filter by datetime field using scan API
-            df = table.scan(
-                row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
-            ).to_arrow()
-            logger.info(
-                f"Records after time filter in {source.table}: {len(df)} (cutoff: {self.cutoff_time.isoformat()})"
+            df = (
+                table.scan(
+                    row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
+                )
+                .to_arrow()
+                .sort_by([(source.datetime_field, "descending")])
             )
+
+            if len(df) == 0:
+                logger.debug(f"No records found in {source.table}")
+                return None
+
+            logger.info(f"Read {len(df)} records from {source.table}")
             return df
         except Exception as e:
-            logger.error(f"Error reading source table {source.table}: {e}")
+            logger.error(f"Error reading {source.table}: {e}")
             return None
-
-    async def _get_source_records(self) -> list[pa.Table]:
-        """Get records from source tables concurrently."""
-        tasks = [self._get_source_table(source) for source in self.config.source.tables]
-        results = await asyncio.gather(*tasks)
-        tables = [table for table in results if table is not None]
-        return tables
 
     async def drop_target_table(self) -> None:
         """Drop the target table if it exists."""
@@ -134,36 +140,30 @@ class AWSConnector(ComponentFactory):
             await self.drop_target_table()
 
         # Get records from source tables
-        tables = await self._get_source_records()
-        if not tables:
-            return pa.Table.from_pylist([])
+        tables = await asyncio.gather(
+            *[self._get_source_table(j) for j in range(len(self.config.source.tables))]
+        )
+
+        if not all(tables):
+            for t, c in zip(tables, self.config.source.tables, strict=False):
+                if t is None:
+                    logger.warn(f"Source table {c.database}.{c.table} not found")
+
+            return pa.table()
 
         # Get mapping of index keys to last processing time in target table
-        source_dt = await self._get_processed_records()
+        cutoff_ts = await self._get_processed_records()
 
         # Filter each source table before joining
+        # TODO: Fix this
         filtered_tables = []
-        for table, source_config in zip(tables, self.config.source.tables, strict=False):
-            if source_dt:
-                index_col = table[source_config.index_field]
-                datetime_col = table[source_config.datetime_field]
+        for table, config in zip(tables, self.config.source.tables, strict=False):
+            mask = pc.is_in(
+                table[self.config.source.index_field],
+                pa.array(list(cutoff_ts.keys())),
+            )
 
-                # Convert to Python for easier comparison
-                indices = index_col.to_pylist()
-                datetimes = [datetime.fromisoformat(str(dt)) for dt in datetime_col.to_pylist()]
-
-                # Only keep records where source datetime > target datetime
-                keep_indices = []
-                for idx, target_dt in zip(indices, datetimes, strict=False):
-                    if idx not in source_dt or target_dt > source_dt[idx]:
-                        keep_indices.append(True)
-                    else:
-                        keep_indices.append(False)
-
-                # Apply filter
-                table = table.filter(pa.array(keep_indices))
-
-            filtered_tables.append(table)
+            filtered_tables.append(table.filter(mask))
 
         # Join filtered tables
         result = filtered_tables[0]

@@ -144,7 +144,7 @@ inference:
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.11+
 - Poetry for dependency management
 - AWS CLI and SAM CLI
 - AWS account with appropriate permissions
