@@ -103,9 +103,7 @@ class AWSConnector(ComponentFactory):
             # Filter by datetime field using scan API
             df = table.scan(
                 row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
-                limit=self.config.source.max_records,
             ).to_arrow()
-
             logger.info(
                 f"Records after time filter in {source.table}: {len(df)} (cutoff: {self.cutoff_time.isoformat()})"
             )
@@ -172,8 +170,8 @@ class AWSConnector(ComponentFactory):
         for table in filtered_tables[1:]:
             result = result.join(table, keys=self.config.target.index_field)
 
-        logger.debug(f"Number of records after filtering and joining: {len(result)}")
-        return result
+        logger.info(f"Returning {self.config.source.max_records}/{len(result)}")
+        return result.slice(0, self.config.source.max_records)
 
     async def write(
         self,

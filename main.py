@@ -50,10 +50,6 @@ async def main(config: dict[str, type], drop: bool = False) -> None:
         logger.info(f"Processed {len(results)}/{len(records)} records")
         logger.debug(f"Result schema: {results.schema}")
 
-    # join index from records to results
-    records = records.select([connector.config.target.index_field])
-    results = records.join(results, keys=connector.config.target.index_field)
-
     # check
     if not results:
         logger.warning("No valid records to process, exiting")

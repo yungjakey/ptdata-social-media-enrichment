@@ -4,6 +4,8 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
 
 ## TODO!
 
+- [ ] Document new job structure
+- [ ] Fix update check
 - [ ] Github workflow for redeploying on change
 
 ## Architecture Overview

@@ -7,14 +7,12 @@ connector:
       table: fact_social_media_reaction_post
       datetime_field: last_update_time
       index_field: post_key
-      location: dev/gold/fact/fact_social_media_reaction_post
     - database: dev_gold
       table: dim_post_details
       datetime_field: last_update_time
       index_field: post_key
-      location: dev/gold/dim/dim_post_details
     time_filter_hours: 300
-    max_records: 500  # Process in batches
+    max_records: 100  # Process in batches
     
   target:
     database: dev_test
