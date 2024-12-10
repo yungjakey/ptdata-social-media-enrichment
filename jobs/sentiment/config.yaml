@@ -24,8 +24,6 @@ connector:
     location: s3://aws-orf-social-media-analytics/dev/test/fact/social_media_sentiment
     partition_by:
       - year
-      - month
-      - day
 
 inference:
   workers: 20

@@ -78,12 +78,15 @@ class InferenceClient(ComponentFactory):
         stop=tenacity.stop_after_attempt(5),
         reraise=True,
     )
-    async def _process_record(self, record: dict[str, type]) -> dict[str, type]:
+    async def _process_record(self, record: dict[str, type], index: str) -> dict[str, type]:
         """Process single record with rate limiting."""
-
         async with self._semaphore:
+            filtered_record = {
+                k: v for k, v in record.items() if k not in self.config.exclude_fields
+            }
+
             sysmsg = self.model.get_prompt()
-            usrmsg = json.dumps(record, indent=2, cls=DateTimeEncoder)
+            usrmsg = json.dumps(filtered_record, indent=2, cls=DateTimeEncoder, ensure_ascii=True)
 
             messages = [
                 {"role": "system", "content": sysmsg},
@@ -110,35 +113,43 @@ class InferenceClient(ComponentFactory):
             logger.debug(f"Completion content: {content}")
 
             try:
-                return json.loads(content)  # Parse JSON response
+                result = json.loads(content)  # Parse JSON response
+                result[index] = record[index]
+                return result
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
 
-    async def process_batch(self, records: pa.Table) -> pa.Table:
+    async def process_batch(self, records: pa.Table, index: str) -> pa.Table:
         """Process a batch of records."""
         if not len(records):
             return pa.Table.from_pylist([])
 
-        # Filter out excluded fields
-        fields = [f for f in records.schema.names if f not in self.config.exclude_fields]
-        logger.debug(f"Fields after exclusion: {fields}")
-        records = records.select(fields)
-        logger.debug(f"Records schema: {records.schema}")
-
         # Create tasks for valid records
         tasks = []
         for record in records.to_pylist():
-            tasks.append(self._process_record(record))
+            tasks.append(self._process_record(record, index))
 
         # Process records concurrently
+        response = await asyncio.gather(*tasks, return_exceptions=True)
         results = []
-        for result in await asyncio.gather(*tasks, return_exceptions=True):
-            if isinstance(result, Exception):
-                logger.error(f"Failed to process record: {result}")
-            elif result is not None:
-                results.append(result)
+        for r in response:
+            if isinstance(r, Exception):
+                logger.error(f"Error processing record: {r}")
+            if not isinstance(r, Exception):
+                results.append(r)
 
-        return pa.Table.from_pylist(results)
+        # Create table and cast index field to match source schema
+        result_table = pa.Table.from_pylist(results)
+        if index:
+            # Get the field type from source records
+            source_field_type = records.schema.field(index).type
+            result_table = result_table.set_column(
+                result_table.schema.get_field_index(index),
+                index,
+                result_table[index].cast(source_field_type),
+            )
+
+        return result_table
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""

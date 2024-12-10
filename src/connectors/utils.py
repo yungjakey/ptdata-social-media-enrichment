@@ -39,11 +39,13 @@ class IcebergConverter:
     PA_TO_PY = {
         pa.int64(): int,
         pa.string(): str,
+        pa.large_string(): str,
         pa.float64(): float,
         pa.bool_(): bool,
         pa.timestamp("us"): datetime,
         pa.date32(): date,
         pa.binary(): bytes,
+        pa.large_binary(): bytes,
     }
 
     def __init__(
@@ -110,19 +112,19 @@ class IcebergConverter:
         if not self._partition_transforms:
             return PartitionSpec()
 
-        # Create a single partition field for each transform
+        # Create partition fields using timestamp field (ID=1) as source
         partition_fields = []
-        next_field_id = len(schema.fields) + 1
+        partition_field_id = 1000  # Start partition field IDs from 1000
 
         for transform in self._partition_transforms:
             partition_fields.append(
                 PartitionField(
-                    source_id=1,  # Datetime is always field 1
-                    field_id=next_field_id,
+                    source_id=1,  # Use timestamp field's ID
+                    field_id=partition_field_id,
                     transform=transform,
                     name=transform,
                 )
             )
-            next_field_id += 1
+            partition_field_id += 1
 
         return PartitionSpec(*partition_fields)

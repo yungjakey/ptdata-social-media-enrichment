@@ -5,7 +5,6 @@ import logging
 import os
 import signal
 import time
-from datetime import datetime, timezone
 
 import yaml
 
@@ -14,7 +13,7 @@ from src.connectors import AWSConnector
 from src.inference import InferenceClient
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 def signal_handler(sig, frame):
@@ -23,20 +22,22 @@ def signal_handler(sig, frame):
     exit(0)
 
 
-async def main(config: RootConfig) -> None:
+async def main(config: RootConfig, drop: bool = True) -> None:
     """Run the main process."""
     logger.info("Starting process")
     logger.debug(f"Validating config: {config.model_dump_json(indent=2)}")
 
-    # Initialize clients
     connector = AWSConnector.from_config(config.connector)
+    index_field = connector.config.target.index_field
 
+    # init early to check config
     async with InferenceClient.from_config(config.inference) as provider:
         try:
             # Read and process records
             logger.info("Reading data from source")
-            records = await connector.read()
+            records = await connector.read(drop=drop)
             logger.info(f"Read {len(records)} records from source")
+            logger.debug(f"Source schema: {records.schema}")
 
             if not records:
                 logger.info("No records found to process, exiting")
@@ -44,19 +45,23 @@ async def main(config: RootConfig) -> None:
 
             # Process records
             logger.info("Processing records")
-            results = await provider.process_batch(records)
+            results = await provider.process_batch(records=records, index=index_field)
             logger.info(f"Processed {len(results)}/{len(records)} records")
+            logger.debug(f"Result schema: {results.schema}")
+
+            # Only keep fields we need from source
+            source_fields = [connector.config.target.index_field]
+            records = records.select(source_fields)
+            logger.debug(f"Source schema after select: {records.schema}")
 
             # join index from records to results
             results = records.join(results, keys=connector.config.target.index_field)
-
             if not results:
                 logger.warning("No valid records to process, exiting")
                 return
 
             # Write results with current UTC timestamp
-            now = datetime.now(timezone.utc)
-            await connector.write(records=results, model=provider.model, now=now)
+            await connector.write(records=results, model=provider.model)
             logger.info(f"Wrote {len(results)} records to destination")
 
         except Exception as e:
@@ -87,7 +92,7 @@ if __name__ == "__main__":
 
         # Run job and measure time
         start = time.time()
-        asyncio.run(main(config))
+        asyncio.run(main(config, drop=True))  # Drop table for testing
         end = time.time()
 
         logger.info(f"Workflow completed in {end - start:.2f} seconds")

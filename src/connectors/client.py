@@ -58,22 +58,35 @@ class AWSConnector(ComponentFactory):
     async def _get_processed_records(self) -> dict[str, datetime]:
         """Get mapping of index keys to their last processing time."""
         try:
-            # Use fact catalog for target table since it's a fact table
             catalog = await self.catalog
             table = catalog.load_table((self.config.target.database, self.config.target.table))
-
-            df = table.scan().to_arrow()
-
-            # Create mapping of index -> processed_at
-            index_col = df[self.config.target.index_field]
-            datetime_col = df[self.config.target.datetime_field]
-            return {
-                idx: datetime.fromisoformat(str(dt))
-                for idx, dt in zip(index_col.to_pylist(), datetime_col.to_pylist(), strict=False)
-            }
         except NoSuchTableError:
             logger.info("Target table does not exist yet")
             return {}
+
+        # Check if we have any data
+        df = table.scan().to_arrow()
+        if len(df) == 0:
+            logger.debug("Target table exists but is empty")
+            return {}
+
+        # Create mapping of index -> processed_at
+        logger.debug(f"Target table schema: {df.schema}")
+        try:
+            index_col = df[self.config.target.index_field]
+            datetime_col = df[self.config.target.datetime_field]
+        except KeyError as e:
+            raise KeyError(
+                f"Could not find index field '{self.config.target.index_field}' in target table"
+            ) from e
+
+        processed = {
+            idx: datetime.fromisoformat(str(dt))
+            for idx, dt in zip(index_col.to_pylist(), datetime_col.to_pylist(), strict=False)
+        }
+        logger.debug(f"Found {len(processed)} previously processed records")
+
+        return processed
 
     async def _get_source_table(self, source) -> pa.Table | None:
         """Get records from a single source table."""
@@ -84,12 +97,13 @@ class AWSConnector(ComponentFactory):
 
             # Filter by datetime field using scan API
             df = table.scan(
-                row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'"
+                row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
+                limit=self.config.source.max_records,
             ).to_arrow()
 
             return df
         except Exception as e:
-            logger.error(f"Error reading from table {source.database}.{source.table}: {e}")
+            logger.error(f"Error reading source table {source.table}: {e}")
             return None
 
     async def _get_source_records(self) -> list[pa.Table]:
@@ -108,31 +122,67 @@ class AWSConnector(ComponentFactory):
 
         return tables
 
-    async def read(self) -> pa.Table:
-        """Read records from source tables."""
-        processed = await self._get_processed_records()
-        tables = await self._get_source_records()
+    async def drop_target_table(self) -> None:
+        """Drop the target table if it exists."""
+        try:
+            catalog = await self.catalog
+            catalog.drop_table((self.config.target.database, self.config.target.table))
+            logger.info(f"Dropped table {self.config.target.database}.{self.config.target.table}")
+        except NoSuchTableError:
+            logger.info("Target table does not exist, nothing to drop")
 
-        if not len(tables):
+    async def read(self, drop: bool = False) -> pa.Table:
+        """Read records from source tables."""
+        if drop:
+            await self.drop_target_table()
+
+        # Get records from source tables
+        tables = await self._get_source_records()
+        if not tables:
             return pa.Table.from_pylist([])
 
-        # Start with first table and join others sequentially
+        # Get already processed records from target table
+        processed = await self._get_processed_records()
+
+        # Join all source tables
         result = tables[0]
         for table in tables[1:]:
             result = result.join(table, keys=self.config.target.index_field)
 
-        # Filter out already processed records if any
+        # Filter out records that haven't been updated since last processing
         logger.debug(f"Number of records before filtering: {len(result)}")
         if processed:
             index_col = result[self.config.source.tables[0].index_field]
-            mask = pa.compute.is_in(index_col, value_set=pa.array(list(processed.keys())))
-            result = result.filter(pa.compute.invert(mask))
-        logger.debug(f"Number of records after filtering: {len(result)}")
+            datetime_col = result[self.config.source.tables[0].datetime_field]
 
+            # Convert to Python for easier comparison
+            indices = index_col.to_pylist()
+            datetimes = [datetime.fromisoformat(str(dt)) for dt in datetime_col.to_pylist()]
+
+            # Only keep records where source datetime > target datetime
+            keep_indices = []
+            for idx, dt in zip(indices, datetimes, strict=False):
+                if idx not in processed or dt > processed[idx]:
+                    keep_indices.append(True)
+                else:
+                    keep_indices.append(False)
+
+            # Apply filter
+            result = result.filter(pa.array(keep_indices))
+
+        logger.debug(f"Number of records after filtering: {len(result)}")
         return result
 
-    async def write(self, records: pa.Table, model: type[BaseModel], now: datetime) -> None:
+    async def write(
+        self,
+        records: pa.Table,
+        model: type[BaseModel],
+        now: datetime | None = None,
+    ) -> None:
         """Write records to target table."""
+
+        if not now:
+            now = datetime.now()
 
         # Add processing timestamp
         timestamp_field = pa.field(
