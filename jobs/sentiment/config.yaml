@@ -13,13 +13,13 @@ connector:
       datetime_field: last_update_time
       index_field: post_key
       location: dev/gold/dim/dim_post_details
-    time_filter_hours: 240
-    max_records: 10  # Process in batches
+    time_filter_hours: 300
+    max_records: 30  # Process in batches
     
   target:
     database: dev_test
     table: social_media_sentiment
-    datetime_field: last_update_time
+    datetime_field: written_at
     index_field: post_key
     location: s3://aws-orf-social-media-analytics/dev/test/fact/social_media_sentiment
     partition_by:

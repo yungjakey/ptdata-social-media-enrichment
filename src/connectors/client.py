@@ -64,10 +64,14 @@ class AWSConnector(ComponentFactory):
             logger.info("Target table does not exist yet")
             return {}
 
-        # Check if we have any data
-        df = table.scan().to_arrow()
+        # Only look at records within our time window
+        logger.debug(f"Cutoff time: {self.cutoff_time.isoformat()}")
+        df = table.scan(
+            row_filter=f"{self.config.target.datetime_field} >= '{self.cutoff_time.isoformat()}'",
+        ).to_arrow()
+
         if len(df) == 0:
-            logger.debug("Target table exists but is empty")
+            logger.debug("No records found in time window")
             return {}
 
         # Create mapping of index -> processed_at
@@ -75,6 +79,12 @@ class AWSConnector(ComponentFactory):
         try:
             index_col = df[self.config.target.index_field]
             datetime_col = df[self.config.target.datetime_field]
+
+            # Log some sample timestamps for debugging
+            sample_size = min(5, len(datetime_col))
+            sample_times = [str(dt) for dt in datetime_col[:sample_size]]
+            logger.debug(f"Sample timestamps from target: {sample_times}")
+
         except KeyError as e:
             raise KeyError(
                 f"Could not find index field '{self.config.target.index_field}' in target table"
@@ -84,7 +94,7 @@ class AWSConnector(ComponentFactory):
             idx: datetime.fromisoformat(str(dt))
             for idx, dt in zip(index_col.to_pylist(), datetime_col.to_pylist(), strict=False)
         }
-        logger.debug(f"Found {len(processed)} previously processed records")
+        logger.debug(f"Found {len(processed)} previously processed records in time window")
 
         return processed
 
@@ -95,11 +105,26 @@ class AWSConnector(ComponentFactory):
             catalog = await self.catalog
             table = catalog.load_table((source.database, source.table))
 
+            # Get total count first
+            total_df = table.scan().to_arrow()
+            logger.info(f"Total records in {source.table}: {len(total_df)}")
+
             # Filter by datetime field using scan API
+            logger.debug(f"Source cutoff time: {self.cutoff_time.isoformat()}")
             df = table.scan(
                 row_filter=f"{source.datetime_field} >= '{self.cutoff_time.isoformat()}'",
                 limit=self.config.source.max_records,
             ).to_arrow()
+
+            logger.info(
+                f"Records after time filter in {source.table}: {len(df)} (cutoff: {self.cutoff_time.isoformat()})"
+            )
+
+            if len(df) > 0:
+                # Log some sample timestamps for debugging
+                sample_size = min(5, len(df))
+                sample_times = [str(dt) for dt in df[source.datetime_field][:sample_size]]
+                logger.debug(f"Sample timestamps from source {source.table}: {sample_times}")
 
             return df
         except Exception as e:
@@ -144,33 +169,36 @@ class AWSConnector(ComponentFactory):
         # Get already processed records from target table
         processed = await self._get_processed_records()
 
-        # Join all source tables
-        result = tables[0]
-        for table in tables[1:]:
+        # Filter each source table before joining
+        filtered_tables = []
+        for table, source_config in zip(tables, self.config.source.tables, strict=False):
+            if processed:
+                index_col = table[source_config.index_field]
+                datetime_col = table[source_config.datetime_field]
+
+                # Convert to Python for easier comparison
+                indices = index_col.to_pylist()
+                datetimes = [datetime.fromisoformat(str(dt)) for dt in datetime_col.to_pylist()]
+
+                # Only keep records where source datetime > target datetime
+                keep_indices = []
+                for idx, dt in zip(indices, datetimes, strict=False):
+                    if idx not in processed or dt > processed[idx]:
+                        keep_indices.append(True)
+                    else:
+                        keep_indices.append(False)
+
+                # Apply filter
+                table = table.filter(pa.array(keep_indices))
+
+            filtered_tables.append(table)
+
+        # Join filtered tables
+        result = filtered_tables[0]
+        for table in filtered_tables[1:]:
             result = result.join(table, keys=self.config.target.index_field)
 
-        # Filter out records that haven't been updated since last processing
-        logger.debug(f"Number of records before filtering: {len(result)}")
-        if processed:
-            index_col = result[self.config.source.tables[0].index_field]
-            datetime_col = result[self.config.source.tables[0].datetime_field]
-
-            # Convert to Python for easier comparison
-            indices = index_col.to_pylist()
-            datetimes = [datetime.fromisoformat(str(dt)) for dt in datetime_col.to_pylist()]
-
-            # Only keep records where source datetime > target datetime
-            keep_indices = []
-            for idx, dt in zip(indices, datetimes, strict=False):
-                if idx not in processed or dt > processed[idx]:
-                    keep_indices.append(True)
-                else:
-                    keep_indices.append(False)
-
-            # Apply filter
-            result = result.filter(pa.array(keep_indices))
-
-        logger.debug(f"Number of records after filtering: {len(result)}")
+        logger.debug(f"Number of records after filtering and joining: {len(result)}")
         return result
 
     async def write(

@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import signal
-import time
 
 import yaml
 
@@ -13,7 +12,7 @@ from src.connectors import AWSConnector
 from src.inference import InferenceClient
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def signal_handler(sig, frame):
@@ -22,7 +21,7 @@ def signal_handler(sig, frame):
     exit(0)
 
 
-async def main(config: RootConfig, drop: bool = True) -> None:
+async def main(config: RootConfig, drop: bool = False) -> None:
     """Run the main process."""
     logger.info("Starting process")
     logger.debug(f"Validating config: {config.model_dump_json(indent=2)}")
@@ -49,12 +48,8 @@ async def main(config: RootConfig, drop: bool = True) -> None:
             logger.info(f"Processed {len(results)}/{len(records)} records")
             logger.debug(f"Result schema: {results.schema}")
 
-            # Only keep fields we need from source
-            source_fields = [connector.config.target.index_field]
-            records = records.select(source_fields)
-            logger.debug(f"Source schema after select: {records.schema}")
-
             # join index from records to results
+            records = records.select([connector.config.target.index_field])
             results = records.join(results, keys=connector.config.target.index_field)
             if not results:
                 logger.warning("No valid records to process, exiting")
@@ -70,6 +65,8 @@ async def main(config: RootConfig, drop: bool = True) -> None:
 
 
 if __name__ == "__main__":
+    import time
+
     # Configure logging
     logging.basicConfig(
         level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -92,7 +89,7 @@ if __name__ == "__main__":
 
         # Run job and measure time
         start = time.time()
-        asyncio.run(main(config, drop=True))  # Drop table for testing
+        asyncio.run(main(config, drop=False))  # Drop table for testing
         end = time.time()
 
         logger.info(f"Workflow completed in {end - start:.2f} seconds")
