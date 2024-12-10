@@ -419,6 +419,7 @@ mypy-boto3-stepfunctions = {version = ">=1.35.0,<1.36.0", optional = true, marke
 mypy-boto3-sts = {version = ">=1.35.0,<1.36.0", optional = true, markers = "extra == \"sts\""}
 mypy-boto3-xray = {version = ">=1.35.0,<1.36.0", optional = true, markers = "extra == \"xray\""}
 types-s3transfer = "*"
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [package.extras]
 accessanalyzer = ["mypy-boto3-accessanalyzer (>=1.35.0,<1.36.0)"]
@@ -2190,6 +2191,9 @@ files = [
     {file = "mypy_boto3_apigateway-1.35.67.tar.gz", hash = "sha256:7ee4e0957cd367f72e9aee5abdb2f7b5cefdc1da214e19272ef6741d0200299f"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-cloudformation"
 version = "1.35.64"
@@ -2200,6 +2204,9 @@ files = [
     {file = "mypy_boto3_cloudformation-1.35.64-py3-none-any.whl", hash = "sha256:aba213f3411a65096a8d95633c36e0c57a775ac6ac9ccf1e6fd9bea4002073bc"},
     {file = "mypy_boto3_cloudformation-1.35.64.tar.gz", hash = "sha256:d1a1500df811ac8ebd459640f5b31c14daac784d8a00fc4f67bc6eb391e7b5a8"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-ecr"
@@ -2212,6 +2219,9 @@ files = [
     {file = "mypy_boto3_ecr-1.35.21.tar.gz", hash = "sha256:d7e8c24086ce3b259e4ac2a271fc34ed4effde99c7899ac7d64c2da3cff0acd7"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-glue"
 version = "1.35.74"
@@ -2222,6 +2232,9 @@ files = [
     {file = "mypy_boto3_glue-1.35.74-py3-none-any.whl", hash = "sha256:8f619acd55e0495a808602d0f245e315313df3d63334244d39c644d073391514"},
     {file = "mypy_boto3_glue-1.35.74.tar.gz", hash = "sha256:1e0aaccfe930cc7ea2d10fbd743914558b980717ba5ffe51ecfe59b5b2017efb"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-iam"
@@ -2234,6 +2247,9 @@ files = [
     {file = "mypy_boto3_iam-1.35.61.tar.gz", hash = "sha256:cf307f7fb2404ceda7fda455f6d4cf3bdf57e12a3b16d27101db6223c59e6fe7"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-kinesis"
 version = "1.35.26"
@@ -2244,6 +2260,9 @@ files = [
     {file = "mypy_boto3_kinesis-1.35.26-py3-none-any.whl", hash = "sha256:f5e526f3b91ac9709c487a4334853149c2cabb41700ef93827daeb742e05c05e"},
     {file = "mypy_boto3_kinesis-1.35.26.tar.gz", hash = "sha256:865f2697f62dfc7d04052436a925bdf0d39a9317cde8c6981a6ac46e659c1c7f"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-lambda"
@@ -2256,6 +2275,9 @@ files = [
     {file = "mypy_boto3_lambda-1.35.68.tar.gz", hash = "sha256:577a9465ac63ac564efc2755a7e72c28a9d2f496747c1faf242cb13d5017b262"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-s3"
 version = "1.35.76"
@@ -2266,6 +2288,9 @@ files = [
     {file = "mypy_boto3_s3-1.35.76-py3-none-any.whl", hash = "sha256:35f9ae109c3cb64ac6b44596dffc429058085ddb82f4daaf5be0a39e5cc1b576"},
     {file = "mypy_boto3_s3-1.35.76.tar.gz", hash = "sha256:6cf1f034985fe610754c3e6ef287490629870d508ada13b7d61e7b9aaeb46108"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-schemas"
@@ -2278,6 +2303,9 @@ files = [
     {file = "mypy_boto3_schemas-1.35.0.tar.gz", hash = "sha256:a63cbf1c5189e29638b7f1522357db080bfd99e142110a06df6192b5d68f0dc8"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-secretsmanager"
 version = "1.35.0"
@@ -2288,6 +2316,9 @@ files = [
     {file = "mypy_boto3_secretsmanager-1.35.0-py3-none-any.whl", hash = "sha256:ff72d5743061d1d9bf3f5e308990b78c9bede8e02648f6eb8712e3b2e76d2669"},
     {file = "mypy_boto3_secretsmanager-1.35.0.tar.gz", hash = "sha256:c37d181315ba10d8546872304d7f266e7461429b08e63507c23cc508c3ef4264"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-signer"
@@ -2300,6 +2331,9 @@ files = [
     {file = "mypy_boto3_signer-1.35.0.tar.gz", hash = "sha256:06653bbc2b92f0ec390d2622e2a6cbad8a191ac758c21e0803d1151cd18c8232"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-sqs"
 version = "1.35.0"
@@ -2310,6 +2344,9 @@ files = [
     {file = "mypy_boto3_sqs-1.35.0-py3-none-any.whl", hash = "sha256:9fd6e622ed231c06f7542ba6f8f0eea92046cace24defa95d0d0ce04e7caee0c"},
     {file = "mypy_boto3_sqs-1.35.0.tar.gz", hash = "sha256:61752f1c2bf2efa3815f64d43c25b4a39dbdbd9e472ae48aa18d7c6d2a7a6eb8"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-boto3-stepfunctions"
@@ -2322,6 +2359,9 @@ files = [
     {file = "mypy_boto3_stepfunctions-1.35.68.tar.gz", hash = "sha256:4abef0d339463ebe612836f42154a092e95eed025baca9a15be1286cc9a90434"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-sts"
 version = "1.35.61"
@@ -2333,6 +2373,9 @@ files = [
     {file = "mypy_boto3_sts-1.35.61.tar.gz", hash = "sha256:37465ba1d3202cd39b508c346955f9a5a2597071300791a569cbbc2ad7ab4dd1"},
 ]
 
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
+
 [[package]]
 name = "mypy-boto3-xray"
 version = "1.35.67"
@@ -2343,6 +2386,9 @@ files = [
     {file = "mypy_boto3_xray-1.35.67-py3-none-any.whl", hash = "sha256:289b4fed82208724d9a5f5eb662013e142dc9c1d78aab5950b58dfe3259a31b9"},
     {file = "mypy_boto3_xray-1.35.67.tar.gz", hash = "sha256:36a4a1b7782777001083551ccd844496f71b42122fe4c3f95fc0a9d512a7317f"},
 ]
+
+[package.dependencies]
+typing-extensions = {version = ">=4.1.0", markers = "python_version < \"3.12\""}
 
 [[package]]
 name = "mypy-extensions"
@@ -3976,5 +4022,5 @@ propcache = ">=0.2.0"
 
 [metadata]
 lock-version = "2.0"
-python-versions = "^3.12"
-content-hash = "92ee0a96b3d0298e2af3976b4ce89ab2f369384aace96d9272d28fcee5e9310f"
+python-versions = "^3.11"
+content-hash = "d965f3606bc8336e5928c0187d11cb46f7f5f97ad6c3e7e58d16e8c4e85199d5"

@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import signal
 
 import yaml
 
@@ -21,50 +20,53 @@ def signal_handler(sig, frame):
     exit(0)
 
 
-async def main(config: RootConfig, drop: bool = False) -> None:
+async def main(config: dict[str, type], drop: bool = False) -> None:
     """Run the main process."""
     logger.info("Starting process")
-    logger.debug(f"Validating config: {config.model_dump_json(indent=2)}")
 
+    # Validate config
+    config = RootConfig.model_validate(config)
+    logger.debug(f"Validated config: {config.model_dump_json(indent=2)}")
+
+    # Init connector
     connector = AWSConnector.from_config(config.connector)
     index_field = connector.config.target.index_field
 
-    # init early to validate config
+    # Read and process records
+    logger.info("Reading data from source")
+    records = await connector.read(drop=drop)
+    logger.info(f"Read {len(records)} records from source")
+    logger.debug(f"Source schema: {records.schema}")
+
+    # check
+    if not records:
+        logger.info("No records found to process, exiting")
+        return
+
+    # Process records
     async with InferenceClient.from_config(config.inference) as provider:
-        try:
-            # Read and process records
-            logger.info("Reading data from source")
-            records = await connector.read(drop=drop)
-            logger.info(f"Read {len(records)} records from source")
-            logger.debug(f"Source schema: {records.schema}")
+        logger.info("Processing records")
+        results = await provider.process_batch(records=records, index=index_field)
+        logger.info(f"Processed {len(results)}/{len(records)} records")
+        logger.debug(f"Result schema: {results.schema}")
 
-            if not records:
-                logger.info("No records found to process, exiting")
-                return
+    # join index from records to results
+    records = records.select([connector.config.target.index_field])
+    results = records.join(results, keys=connector.config.target.index_field)
 
-            # Process records
-            logger.info("Processing records")
-            results = await provider.process_batch(records=records, index=index_field)
-            logger.info(f"Processed {len(results)}/{len(records)} records")
-            logger.debug(f"Result schema: {results.schema}")
+    # check
+    if not results:
+        logger.warning("No valid records to process, exiting")
+        return
 
-            # join index from records to results
-            records = records.select([connector.config.target.index_field])
-            results = records.join(results, keys=connector.config.target.index_field)
-            if not results:
-                logger.warning("No valid records to process, exiting")
-                return
-
-            # Write results with current UTC timestamp
-            await connector.write(records=results, model=provider.model)
-            logger.info(f"Wrote {len(results)} records to destination")
-
-        except Exception as e:
-            logger.error(f"Error processing records: {e}", exc_info=True)
-            raise
+    # Write results with current UTC timestamp
+    await connector.write(records=results, model=provider.model)
+    logger.info(f"Wrote {len(results)} records to destination")
 
 
 if __name__ == "__main__":
+    import argparse
+    import signal
     import time
 
     # Configure logging
@@ -72,20 +74,22 @@ if __name__ == "__main__":
         level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    try:
-        # Register signal handlers
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
+    # read model from args
+    parser = argparse.ArgumentParser(description="Run sentiment analysis job")
+    parser.add_argument("--model", type=str, default="sentiment", help="Model to use")
+    args = parser.parse_args()
+
+    try:
         # Load and validate configuration
-        config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+        config_path = os.path.join("config", f"{args.model}.yaml")
         logger.info(f"Loading config from {config_path}")
 
         with open(config_path) as f:
             config = yaml.safe_load(f)
-
-        config = RootConfig.model_validate(config)
-        logger.debug(f"Validated config: {config.model_dump_json(indent=2)}")
 
         # Run job and measure time
         start = time.time()
@@ -93,7 +97,6 @@ if __name__ == "__main__":
         end = time.time()
 
         logger.info(f"Workflow completed in {end - start:.2f} seconds")
-
     except Exception as e:
         logger.error(f"Error running job: {e}", exc_info=True)
         raise

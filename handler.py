@@ -10,18 +10,18 @@ from botocore.exceptions import ClientError
 from pydantic import ValidationError
 
 from main import main
-from src.common import RootConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def load_config(model_type: str) -> RootConfig:
+def load_config(model_type: str) -> dict:
     """Load config from yaml file."""
     config_path = os.path.join(os.path.dirname(__file__), "config", f"{model_type}.yaml")
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    return RootConfig(**config)
+
+    return config
 
 
 def get_secret():
@@ -53,10 +53,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
         os.environ["OPENAI_API_BASE"] = secrets["OPENAI_API_BASE"]
 
-        # Parse query parameters
-        query_params = event.get("queryStringParameters", {}) or {}
-        drop_table = query_params.get("drop", "false").lower() == "true"
-
         # Get model type from path
         path = event.get("path", "")
         model_type = path.strip("/")  # e.g., "sentiment" from "/sentiment"
@@ -65,13 +61,12 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         # Load config and run main
         config = load_config(model_type)
-        asyncio.run(main(config, drop=drop_table))
+        asyncio.run(main(config, drop=False))
 
         return {
             "statusCode": 200,
             "body": json.dumps({"message": f"Successfully processed {model_type} records"}),
         }
-
     except ValidationError as e:
         logger.error(f"Config validation error: {e}")
         return {

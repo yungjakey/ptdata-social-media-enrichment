@@ -2,6 +2,10 @@
 
 A modular AWS Lambda-based system for enriching social media data using Azure OpenAI's language models, with Apache Iceberg for data storage and PyArrow for efficient data processing.
 
+## TODO!
+
+- [ ] Github workflow for redeploying on change
+
 ## Architecture Overview
 
 ### Core Components

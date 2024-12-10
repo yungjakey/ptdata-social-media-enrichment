@@ -14,7 +14,7 @@ connector:
       index_field: post_key
       location: dev/gold/dim/dim_post_details
     time_filter_hours: 300
-    max_records: 30  # Process in batches
+    max_records: 500  # Process in batches
     
   target:
     database: dev_test
