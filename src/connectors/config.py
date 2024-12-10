@@ -2,114 +2,94 @@
 
 from __future__ import annotations
 
-from enum import Enum
-
-from pydantic import Field
-
-from src.common.config import BaseConfig
+from pydantic import BaseModel, Field, model_validator
 
 
-class AllowedTypes(str, Enum):
-    INT = "int"
-    STRING = "string"
-
-
-class AllowedNames(str, Enum):
-    YEAR = "year"
-    MONTH = "month"
-    DAY = "day"
-    HOUR = "hour"
-
-
-class Partition(BaseConfig):
-    Name: AllowedNames = Field(
-        ...,
-        description="Name of the partition",
-    )
-
-    Type: AllowedTypes = Field(
-        ...,
-        description="Type of the partition",
-    )
-
-
-class TableConfig(BaseConfig):
-    """Table configuration for AWS Glue."""
+class TableConfig(BaseModel):
+    """Common configuration for tables."""
 
     database: str = Field(
         ...,
-        description="Name of the Athena database",
+        description="Database name",
     )
-
-    table_name: str = Field(
+    table: str = Field(
         ...,
-        description="Name of the Athena table",
+        description="Table name",
     )
-
-    partitions: list[Partition] | None = Field(
+    index_field: str = Field(
+        ...,
+        description="Field for identifying records",
+    )
+    datetime_field: str = Field(
+        ...,
+        description="Field for tracking updates",
+    )
+    location: str | None = Field(
         default=None,
-        description="Partition configuration as list of Partition objects",
+        description="S3 location for table",
+    )
+    partition_by: list[str] | None = Field(
+        default=None,
+        description="Fields to partition by",
     )
 
-    @property
-    def names(self) -> list[str]:
-        return [col.Name.value for col in self.partitions] if self.partitions else []
 
-    @property
-    def types(self) -> list[str]:
-        return [col.Type.value for col in self.partitions] if self.partitions else []
+class SourceConfig(BaseModel):
+    """Configuration for source data."""
 
-    @property
-    def partition_keys(self) -> list[dict[str, str]]:
-        """Convert partition objects to Glue API format."""
-        if not self.partitions:
-            return []
-        return [{"Name": p.Name.value, "Type": p.Type.value} for p in self.partitions]
+    tables: list[TableConfig] = Field(
+        ...,
+        description="Tables to read from",
+    )
+    time_filter_hours: int | None = Field(
+        default=None, description="Only process records updated within this time window", ge=1
+    )
+    max_records: int | None = Field(
+        default=None, description="Maximum number of records to process per batch", ge=1
+    )
+
+    @model_validator(
+        mode="after",
+    )
+    def validate_index_fields_match(self) -> SourceConfig:
+        """Validate that all tables use the same index field."""
+        if not self.tables:
+            return self
+
+        index_field = self.tables[0].index_field
+        mismatched = [t for t in self.tables if t.index_field != index_field]
+
+        if mismatched:
+            tables = ", ".join(f"{t.database}.{t.table}" for t in mismatched)
+            raise ValueError(
+                f"All source tables must use the same index field. "
+                f"Expected '{index_field}' but found mismatches in: {tables}"
+            )
+        return self
 
 
-class AWSConnectorConfig(BaseConfig):
-    """Unified configuration for AWS connector."""
+class TargetConfig(TableConfig):
+    """Configuration for target data."""
+
+    ...
+
+
+class AWSConnectorConfig(BaseModel):
+    """AWS connector configuration."""
 
     region: str = Field(
         default="eu-central-1",
-        description="Region to connect to",
+        description="AWS region",
     )
-    workgroup: str = Field(
-        default="primary",
-        description="Athena workgroup",
-    )
-    target_format: str = Field(
-        default="parquet",
-        description="Target format for output files",
-    )
-    bucket_name: str = Field(
+    warehouse: str = Field(
         ...,
-        description="S3 bucket name",
+        description="AWS Glue warehouse",
     )
-    table_config: TableConfig = Field(
+    source: SourceConfig = Field(
         ...,
-        description="Table configuration",
+        description="Source configuration",
     )
-    source_query: str = Field(
+    target: TargetConfig = Field(
         ...,
-        description="Source query for Athena",
+        description="Target configuration",
     )
-
-    timeout: int = Field(
-        default=60,
-        description="Query timeout in seconds",
-        ge=1,
-        le=60,
-    )
-
-    poll_interval: int = Field(
-        default=1,
-        description="Poll interval in seconds",
-        ge=1,
-        le=10,
-    )
-
-    @property
-    def output_location(self) -> str:
-        """Get the S3 output location."""
-        return f"s3://{self.bucket_name}/"

@@ -6,12 +6,12 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
 
+import pyarrow as pa
 import tenacity
 from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from src.common import DateTimeEncoder
 from src.common.component import ComponentFactory
@@ -23,17 +23,6 @@ logger = logging.getLogger(__name__)
 
 class InferenceClient(ComponentFactory):
     """Manages inference client configuration."""
-
-    _config = InferenceConfig
-
-    @classmethod
-    def from_config(cls, config: dict[str, type]) -> InferenceClient:
-        if not config.get("api_key"):
-            config["api_key"] = os.getenv("OPENAI_API_KEY")
-        if not config.get("api_base"):
-            config["api_base"] = os.getenv("OPENAI_API_BASE")
-
-        return super().from_config(config)
 
     def __init__(self, config: InferenceConfig) -> None:
         """Initialize client."""
@@ -48,6 +37,18 @@ class InferenceClient(ComponentFactory):
         self._tasks: set[asyncio.Task] = set()  # Track active tasks
 
         logger.debug(f"Inference client initialized with config: {config}")
+
+    _config = InferenceConfig
+
+    @classmethod
+    def from_config(cls, config: dict[str, type]) -> InferenceClient:
+        """Create client from config."""
+        if not config.get("api_key"):
+            config["api_key"] = os.getenv("OPENAI_API_KEY")
+        if not config.get("api_base"):
+            config["api_base"] = os.getenv("OPENAI_API_BASE")
+
+        return super().from_config(config)
 
     @property
     def client(self) -> AsyncAzureOpenAI:
@@ -113,54 +114,31 @@ class InferenceClient(ComponentFactory):
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
 
-    async def process_batch(self, records: list[dict[str, type]]) -> list[dict[str, type]]:
+    async def process_batch(self, records: pa.Table) -> pa.Table:
         """Process a batch of records."""
+        if not len(records):
+            return pa.Table.from_pylist([])
 
+        # Filter out excluded fields
+        fields = [f for f in records.schema.names if f not in self.config.exclude_fields]
+        logger.debug(f"Fields after exclusion: {fields}")
+        records = records.select(fields)
+        logger.debug(f"Records schema: {records.schema}")
+
+        # Create tasks for valid records
         tasks = []
-        for record in records:
-            if not isinstance(record, dict):
-                logger.warning(f"Skipping non-dict record: {record}")
-                continue
-
-            record = {
-                k: v
-                for k, v in record.items()
-                if v is not None and k not in self.config.exclude_fields
-            }
+        for record in records.to_pylist():
             tasks.append(self._process_record(record))
 
-        if not tasks:
-            logger.warning("No valid records to process")
-            return []
-
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-
+        # Process records concurrently
         results = []
-        for i, o in zip(records, responses, strict=False):
-            now = datetime.now()
+        for result in await asyncio.gather(*tasks, return_exceptions=True):
+            if isinstance(result, Exception):
+                logger.error(f"Failed to process record: {result}")
+            elif result is not None:
+                results.append(result)
 
-            if isinstance(o, Exception):
-                logger.error(f"Error processing record: {str(o)}")
-                continue
-            if o is None:
-                logger.warning("Null record returned")
-                continue
-
-            try:
-                self.model.model_validate(o)
-            except ValidationError as e:
-                logger.error(f"Error validating response: {e}")
-                continue
-
-            r = {
-                **{k: v for k, v in i.items() if k in self.config.join_fields},
-                **o,
-                self.config.timestamp_field: now.isoformat(),
-            }
-
-            results.append(r)
-
-        return results
+        return pa.Table.from_pylist(results)
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""

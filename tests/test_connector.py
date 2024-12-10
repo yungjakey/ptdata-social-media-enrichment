@@ -1,87 +1,81 @@
 #!/usr/bin/env python3
 
 import asyncio
-import json
 import logging
-import os
+from datetime import datetime
 
-from pydantic import BaseModel, Field
+import numpy as np
+import pyarrow as pa
 
 from src.connectors import AWSConnector
+from src.inference.models.sentiment import Sentiment
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-class MockRecord(BaseModel):
-    """Mock social media post."""
+def create_mock_data(size: int = 10) -> pa.Table:
+    """Create mock data for testing."""
+    rng = np.random.default_rng(42)
 
-    sentiment: str = Field(..., description="Sentiment")
-    score: float = Field(..., description="Sentiment score")
-    impact: float = Field(..., description="Post impact")
-    confidence: float = Field(..., description="Analysis confidence")
+    data = {
+        "post_key": [f"post_{i}" for i in range(size)],
+        "score": rng.random(size=size),
+        "impact": rng.random(size=size),
+        "sentiment": rng.choice(["positive", "negative", "neutral"], size=size),
+        "confidence": rng.random(size=size),
+    }
 
-
-def load_mock_data() -> list[dict[str, str | int]]:
-    """Load mock data from JSON file."""
-    base_path = os.path.dirname(__file__)
-    with open(os.path.join(base_path, "samples/target.json")) as f:
-        return json.loads(f.read())
+    mock_data = pa.Table.from_pydict(data)
+    logging.info(f"Created mock data with schema:\n{mock_data.schema}")
+    return mock_data
 
 
 async def test_connector() -> None:
-    """Test AWS connector with mock data."""
-    mock_data = load_mock_data()
-    database = "dev_test"
-    table_name = "some_ai_source"
-    bucket_name = "orf-tmp"
-
+    """Test AWS connector."""
     config = {
-        "bucket_name": bucket_name,
-        "source_query": f"""
-            SELECT * FROM {database}.{table_name}
-            WHERE year = 2024 AND month = 12 AND day = 9
-            LIMIT 100
-        """,  # noqa: S608
-        "table_config": {
-            "database": database,
-            "table_name": table_name,
-            "partitions": [
-                {"Name": "year", "Type": "int"},
-                {"Name": "month", "Type": "int"},
-                {"Name": "day", "Type": "int"},
+        "warehouse": "s3://aws-orf-social-media-analytics/dev/test",
+        "source": {
+            "tables": [
+                {
+                    "database": "dev_test",
+                    "table": "sentiment",
+                    "datetime_field": "last_update_time",
+                    "index_field": "post_key",
+                    "location": "dev/test/fact/social_media_sentiment",
+                }
             ],
+            "time_filter_hours": 240,
+            "max_records": 10,
+        },
+        "target": {
+            "database": "dev_test",
+            "table": "sentiment",
+            "datetime_field": "last_update_time",
+            "index_field": "post_key",
+            "location": "s3://aws-orf-social-media-analytics/dev/test/fact/social_media_sentiment",
+            "partition_by": ["year"],
         },
     }
 
+    mock_data = create_mock_data()
+    logging.info("Testing write to target table...")
+
     async with AWSConnector.from_config(config) as connector:
-        # Test writing to S3 and Glue
-        logger.info("Testing write to S3.")
-        await connector.write(mock_data, MockRecord)
-        logger.info(f"Wrote {len(mock_data)} records and updated Glue table")
+        try:
+            await connector.write(records=mock_data, model=Sentiment, now=datetime.now())
+            logging.info("Wrote mock results to target table")
 
-        # List S3 files
-        path = os.path.join(database, table_name)
-        files = await connector.list(path)
-        logger.info(f"Found {len(files)} files in {path}")
-
-        for f in files[: min(3, len(files))]:
-            logger.info(
-                f"{f['Key']} ({f['Size']}b) - last modified {f['LastModified']:%Y-%m-%d %H:%M:%S}"
-            )
-
-        # Read from the created table
-        logger.info("Testing read from created table...")
-        results = await connector.read()
-        logger.info(f"Read {len(results)} records from created table")
-
-        for r in results:
-            logger.info(json.dumps(r, indent=2))
-
-        # Drop table
-        logger.info("Dropping table...")
-        await connector._drop_table()
+            logging.info("Testing read from target table...")
+            read_records = await connector.read()
+            logging.info(f"Read {len(read_records)} records from target table")
+        finally:
+            # Cleanup: drop the table
+            catalog = await connector.catalog
+            if catalog.table_exists((config["target"]["database"], config["target"]["table"])):
+                catalog.drop_table((config["target"]["database"], config["target"]["table"]))
+                logging.info("Dropped target table")
 
 
 if __name__ == "__main__":

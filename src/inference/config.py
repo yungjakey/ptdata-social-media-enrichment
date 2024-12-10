@@ -47,19 +47,11 @@ class InferenceConfig(BaseConfig):
         le=50,
         default=1,
     )
-    timestamp_field: str | None = Field(
-        default="processed_at",
-        description="Field to use as timestamp",
-    )
 
     # data integration
     exclude_fields: list[str] = Field(
         default_factory=list,
         description="Fields to exclude from LLM processing",
-    )
-    join_fields: list[str] = Field(
-        default_factory=list,
-        description="Fields of input to join with results",
     )
 
     # inference
