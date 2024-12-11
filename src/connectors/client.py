@@ -41,18 +41,21 @@ class AWSConnector(ComponentFactory):
         """Get the catalog instance."""
         if self._catalog is None:
             # Get credentials from boto3 session
-            credentials = await self.session.get_credentials()
-            frozen_credentials = await credentials.get_frozen_credentials()
-            self._catalog = load_catalog(
-                type="glue",
-                uri=f"glue://{self.config.region}",
-                s3_file_io_impl="pyiceberg.io.s3.S3FileIO",
-                **{
-                    "s3.access-key-id": frozen_credentials.access_key,
-                    "s3.secret-access-key": frozen_credentials.secret_key,
-                    "s3.session-token": frozen_credentials.token,
-                },
-            )
+            try:
+                credentials = await self.session.get_credentials()
+                frozen_credentials = await credentials.get_frozen_credentials()
+                self._catalog = load_catalog(
+                    type="glue",
+                    uri=f"glue://{self.config.region}",
+                    s3_file_io_impl="pyiceberg.io.s3.S3FileIO",
+                    **{
+                        "s3.access-key-id": frozen_credentials.access_key,
+                        "s3.secret-access-key": frozen_credentials.secret_key,
+                        "s3.session-token": frozen_credentials.token,
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Error loading catalog: {e}")
         return self._catalog
 
     async def _get_processed_records(self) -> dict[str, datetime]:
@@ -125,20 +128,24 @@ class AWSConnector(ComponentFactory):
 
     async def read(self, drop: bool = False) -> pa.Table:
         """Read records from source tables."""
+
+        if not await self.catalog:
+            logger.error("Catalog not initialized")
+            return pa.Table.from_pylist([])
+
         if drop:
             await self.drop_target_table()
 
         # Get records from source tables
         tables = await asyncio.gather(
-            *[self._get_source_table(j) for j in range(len(self.config.source.tables))]
+            *[self._get_source_table(j) for j in range(len(self.config.source.tables))],
+            return_exceptions=True,
         )
 
-        if not all(tables):
-            for t, c in zip(tables, self.config.source.tables, strict=False):
-                if t is None:
-                    logger.warn(f"Source table {c.database}.{c.table} not found")
-
-            return pa.table([])
+        for t in tables:
+            if isinstance(t, Exception | None):
+                logger.error(f"Error getting source table: {t}")
+                return pa.Table.from_pylist([])
 
         # Get mapping of index keys to last processing time in target table
         processed = await self._get_processed_records()
@@ -196,6 +203,7 @@ class AWSConnector(ComponentFactory):
             type=pa.timestamp("us"),
             nullable=False,
         )
+
         try:
             table = catalog.load_table(table_identifier)
         except NoSuchTableError:
@@ -216,9 +224,6 @@ class AWSConnector(ComponentFactory):
 
         # Write records to table
         logger.info(f"Writing {records.schema}")
-        for r in records.to_pylist():
-            logger.debug(f"Writing {r}")
-
         table.append(records)
 
     async def drop_target_table(self) -> None:

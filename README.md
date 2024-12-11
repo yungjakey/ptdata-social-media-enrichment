@@ -36,13 +36,6 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
    - Sentiment analysis processing pipeline
    - AWS Secrets Manager integration
 
-### Key Features
-
-- **Type Safety**: Pydantic models and singleton configs throughout the stack
-- **Modular Design**: Factory pattern for extensible components (see [`src/common/`](src/common/README.md))
-- **Data Processing**: PyArrow and Iceberg integration (see [`src/connectors/`](src/connectors/README.md))
-- **AI Integration**: Azure OpenAI with rate limiting (see [`src/inference/`](src/inference/README.md))
-- **Job Framework**: Lambda-based processing pipelines (see [`config/`](config/README.md))
 
 ### System Overview
 
