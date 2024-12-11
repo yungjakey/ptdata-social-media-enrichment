@@ -57,6 +57,8 @@ async def main(config: dict[str, type], drop: bool = False) -> int:
     await connector.write(records=results)
     logger.info(f"Wrote {len(results)} records to destination")
 
+    return len(results)
+
 
 if __name__ == "__main__":
     import argparse
@@ -86,7 +88,7 @@ if __name__ == "__main__":
 
     # Run job and measure time
     start = time.time()
-    asyncio.run(main(config, drop=True))  # Drop table for testing
+    asyncio.run(main(config, drop=False))  # Drop table for testing
     end = time.time()
 
     logger.info(f"Workflow completed in {end - start:.2f} seconds")
