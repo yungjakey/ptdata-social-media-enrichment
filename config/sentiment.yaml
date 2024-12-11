@@ -15,11 +15,11 @@ connector:
     max_records: 100  # Process in batches
     
   target:
-    database: dev_test
+    database: dev_gold
     table: social_media_sentiment
     datetime_field: written_at
     index_field: post_key
-    location: s3://aws-orf-social-media-analytics/dev/test/fact/social_media_sentiment
+    location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_sentiment
     partition_by:
       - month
 

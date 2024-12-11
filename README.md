@@ -4,8 +4,8 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
 
 ## TODO!
 
+- [ ] Fix timeout
 - [ ] Document new job structure
-- [ ] Fix update check
 - [ ] Github workflow for redeploying on change
 
 ## Architecture Overview
@@ -18,14 +18,12 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
    - PyArrow-based data processing
    - Concurrent source table reading
    - Incremental processing support
-   - Type conversion between Python, Iceberg, and PyArrow
 
 2. **Inference Module** ([`src/inference/`](src/inference/README.md))
    - Azure OpenAI integration for batch processing
    - Semaphore-based rate limiting with exponential backoff
    - PyArrow table input/output
    - Pydantic models for response validation
-   - Sentiment analysis implementation
 
 3. **Common Module** ([`src/common/`](src/common/README.md))
    - Component factory pattern implementation
@@ -45,7 +43,7 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
 - **Type Safety**: Pydantic models throughout the stack
 - **Data Processing**: PyArrow and Iceberg integration (see [`src/connectors/`](src/connectors/README.md))
 - **AI Integration**: Azure OpenAI with rate limiting (see [`src/inference/`](src/inference/README.md))
-- **Job Framework**: Lambda-based processing (see [`jobs/`](jobs/README.md))
+- **Job Framework**: Lambda-based processing (see TODO)
 
 ### System Overview
 
@@ -82,10 +80,8 @@ graph LR
 ### Optimizations
 
 #### Performance
-- Concurrent data loading with asyncio
+- Concurrent data loading and processing with asyncio
 - Memory-efficient PyArrow tables
-- Smart batching (? records/request)
-- Rate limiting with backoff
 
 #### Cost
 - Iceberg metadata filtering
@@ -93,42 +89,13 @@ graph LR
 - Lambda memory tuning
 - PyArrow optimizations
 
-### Future Work
-
-#### Near-term
-- Adaptive batch sizing
-- Dead letter queues
-- Cost tracking
-- Circuit breakers
-
-#### Long-term
-- Streaming support
-- Custom embeddings
-- Real-time processing
-- Result caching
 
 ## Configuration
 
 The system uses a hierarchical configuration system:
 
-### 1. Job Configuration (`jobs/sentiment/config.yaml`)
-```yaml
-connector:
-  warehouse: s3://aws-orf-social-media-analytics/dev/gold
-  source:
-    tables:
-      - database: dev_gold
-        table: fact_social_media_reaction_post
-    time_filter_hours: 300
-    max_records: 30
-  target:
-    database: dev_test
-    table: social_media_sentiment
-
-inference:
-  workers: 20
-  response_format: sentiment
-```
+### 1. Job Configuration (`jobs/sentiment/config.yaml`) 
+TODO
 
 ### 2. AWS Configuration (`template.yaml`)
 - Lambda function definitions
@@ -197,8 +164,7 @@ sam local invoke -e events/sentiment.json
 ```bash
 # Build and deploy
 sam build
-sam deploy --guided  # First time
-sam deploy          # Subsequent deployments
+sam deploy [--guided]
 ```
 
 ## Component Details
@@ -220,50 +186,3 @@ sam deploy          # Subsequent deployments
 - Configuration system
 - Type definitions
 - Shared utilities
-
-### Jobs ([`jobs/`](jobs/README.md))
-- Lambda integration
-- Dynamic job loading
-- Sentiment analysis
-- Configuration management
-
-## Security
-
-- Secrets via AWS Secrets Manager
-- IAM roles with least privilege
-- Environment-specific configs
-- Secure API key handling
-
-## Best Practices
-
-1. **Configuration**
-   - Use YAML for readability
-   - Validate with Pydantic
-   - Separate concerns
-
-2. **Development**
-   - Follow type hints
-   - Write unit tests
-   - Document changes
-
-3. **Deployment**
-   - Use SAM for consistency
-   - Monitor resources
-   - Review permissions
-
-4. **Data Processing**
-   - Use batch processing
-   - Handle errors gracefully
-   - Monitor performance
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
-
-## License
-
-[Add your license information here]

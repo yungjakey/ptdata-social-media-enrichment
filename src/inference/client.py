@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from src.common import DateTimeEncoder
 from src.common.component import ComponentFactory
+from src.common.utils import ArrowConverter
 
 from .config import InferenceConfig
 
@@ -36,7 +37,7 @@ class InferenceClient(ComponentFactory):
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.workers)
         self._tasks: set[asyncio.Task] = set()  # Track active tasks
 
-        logger.debug(f"Inference client initialized with config: {config}")
+        logger.debug(f"Inference client in  itialized with config: {config}")
 
     _config = InferenceConfig
 
@@ -78,12 +79,16 @@ class InferenceClient(ComponentFactory):
         stop=tenacity.stop_after_attempt(5),
         reraise=True,
     )
-    async def _process_record(self, record: dict[str, type], index: str) -> dict[str, type]:
+    async def _process_record(
+        self,
+        record: dict[str, type],
+    ) -> type[BaseModel] | None:
         """Process single record with rate limiting."""
+
         async with self._semaphore:
             filtered_record = {
                 k: v for k, v in record.items() if k not in self.config.exclude_fields
-            }
+            }  # and isinstance(v, str | int | float | bool)
 
             sysmsg = self.model.get_prompt()
             usrmsg = json.dumps(filtered_record, indent=2, cls=DateTimeEncoder, ensure_ascii=True)
@@ -113,43 +118,42 @@ class InferenceClient(ComponentFactory):
             logger.debug(f"Completion content: {content}")
 
             try:
-                result = json.loads(content)  # Parse JSON response
-                result[index] = record[index]
+                result = self.model(**json.loads(content))
                 return result
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
+                return None
 
-    async def process_batch(self, records: pa.Table, index: str) -> pa.Table:
+    async def process_batch(self, records: pa.Table) -> pa.Table:
         """Process a batch of records."""
         if not len(records):
             return pa.Table.from_pylist([])
 
+        # Get index field
+        index_col = records.schema.metadata.get(b"index").decode()
+
         # Create tasks for valid records
         tasks = []
-        for record in records.to_pylist():
-            tasks.append(self._process_record(record, index))
+        for record in records:
+            tasks.append(self._process_record(record))
 
         # Process records concurrently
         response = await asyncio.gather(*tasks, return_exceptions=True)
-        results = []
-        for r in response:
-            if isinstance(r, Exception):
-                logger.error(f"Error processing record: {r}")
-            if not isinstance(r, Exception):
-                results.append(r)
+        results, mask = [], []
+        for rec, res in zip(records, response, strict=False):
+            if isinstance(res, Exception):
+                logger.error(f"Error processing record: {rec}")
+                mask.append(False)
+            if res:
+                results.append(res)
+                mask.append(True)
 
         # Create table and cast index field to match source schema
-        result_table = pa.Table.from_pylist(results)
-        if index:
-            # Get the field type from source records
-            source_field_type = records.schema.field(index).type
-            result_table = result_table.set_column(
-                result_table.schema.get_field_index(index),
-                index,
-                result_table[index].cast(source_field_type),
-            )
-
-        return result_table
+        schema = ArrowConverter.to_arrow_schema(self.model)
+        table = pa.Table.from_pylist(results, schema=schema).with_column(
+            records.filter(pa.array(mask).column(index_col)),
+        )
+        return table
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""
@@ -158,6 +162,7 @@ class InferenceClient(ComponentFactory):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit, cleanup resources."""
+
         # Wait for all pending tasks to complete
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)

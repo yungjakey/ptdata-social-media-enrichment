@@ -87,3 +87,7 @@ class InferenceConfig(BaseConfig):
         ge=1,
         le=60,
     )
+    profanity_filter: bool = Field(
+        default=False,
+        description="Filter profanity",
+    )

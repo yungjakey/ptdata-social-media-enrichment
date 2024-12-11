@@ -4,15 +4,14 @@ from datetime import datetime, timedelta
 
 import aioboto3
 import pyarrow as pa
-import pyarrow.compute as pc
 from pydantic import BaseModel
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NoSuchTableError
 
 from src.common.component import ComponentFactory
+from src.common.utils import IcebergConverter
 
 from .config import AWSConnectorConfig
-from .utils import IcebergConverter
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -119,6 +118,12 @@ class AWSConnector(ComponentFactory):
                 logger.debug(f"No records found in {source.table}")
                 return None
 
+            metadata = {
+                "index": source.index_field,
+                "datetime": source.datetime_field,
+            }
+            df = df.replace_schema_metadata(metadata)
+
             logger.info(f"Read {len(df)} records from {source.table}")
             return df
         except Exception as e:
@@ -149,21 +154,23 @@ class AWSConnector(ComponentFactory):
                 if t is None:
                     logger.warn(f"Source table {c.database}.{c.table} not found")
 
-            return pa.table()
+            return pa.table([])
 
         # Get mapping of index keys to last processing time in target table
-        cutoff_ts = await self._get_processed_records()
+        processed = await self._get_processed_records()
 
         # Filter each source table before joining
-        # TODO: Fix this
         filtered_tables = []
         for table, config in zip(tables, self.config.source.tables, strict=False):
-            mask = pc.is_in(
-                table[self.config.source.index_field],
-                pa.array(list(cutoff_ts.keys())),
-            )
-
-            filtered_tables.append(table.filter(mask))
+            mask = [
+                idx not in processed or dt > processed[idx]
+                for idx, dt in zip(
+                    table.column(config.index_field).to_pylist(),
+                    table.column(config.datetime_field).to_pylist(),
+                    strict=False,
+                )
+            ]
+            filtered_tables.append(table.filter(pa.array(mask)))
 
         # Join filtered tables
         result = filtered_tables[0]
@@ -171,7 +178,9 @@ class AWSConnector(ComponentFactory):
             result = result.join(table, keys=self.config.target.index_field)
 
         logger.info(f"Returning {self.config.source.max_records}/{len(result)}")
-        return result.slice(0, self.config.source.max_records)
+        return result.slice(
+            0,
+        )
 
     async def write(
         self,
@@ -193,25 +202,23 @@ class AWSConnector(ComponentFactory):
             pa.array([now] * len(records), type=pa.timestamp("us")),
         )
 
+        catalog = await self.catalog
         try:
-            catalog = await self.catalog
             table = catalog.load_table((self.config.target.database, self.config.target.table))
         except NoSuchTableError:
             # Get the field type from the records schema
             index_field = records.schema.field(self.config.target.index_field)
-            additional_fields = {
-                self.config.target.index_field: index_field.type,
-            }
+
             converter = IcebergConverter(
                 model=model,
                 datetime_field=self.config.target.datetime_field,
                 partition_transforms=self.config.target.partition_by,
-                additional_fields=additional_fields,
+                additional_fields={
+                    index_field.name: index_field.type,
+                },
             )
             schema = converter.to_iceberg_schema()
             spec = converter.to_partition_spec(schema)
-
-            catalog = await self.catalog
             table = catalog.create_table(
                 identifier=(self.config.target.database, self.config.target.table),
                 schema=schema,
