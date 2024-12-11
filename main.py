@@ -30,7 +30,6 @@ async def main(config: dict[str, type], drop: bool = False) -> None:
 
     # Init connector
     connector = AWSConnector.from_config(config.connector)
-    index_field = connector.config.target.index_field
 
     # Read and process records
     logger.info("Reading data from source")
@@ -46,7 +45,7 @@ async def main(config: dict[str, type], drop: bool = False) -> None:
     # Process records
     async with InferenceClient.from_config(config.inference) as provider:
         logger.info("Processing records")
-        results = await provider.process_batch(records=records, index=index_field)
+        results = await provider.process_batch(records=records)
         logger.info(f"Processed {len(results)}/{len(records)} records")
         logger.debug(f"Result schema: {results.schema}")
 

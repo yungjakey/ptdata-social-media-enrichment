@@ -16,7 +16,7 @@ class TableConfig(BaseModel):
         ...,
         description="Table name",
     )
-    index_field: str = Field(
+    index_field: str | None = Field(
         ...,
         description="Field for identifying records",
     )

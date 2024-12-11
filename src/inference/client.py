@@ -79,10 +79,7 @@ class InferenceClient(ComponentFactory):
         stop=tenacity.stop_after_attempt(5),
         reraise=True,
     )
-    async def _process_record(
-        self,
-        record: dict[str, type],
-    ) -> type[BaseModel] | None:
+    async def _process_record(self, record: dict[str, type]) -> type[BaseModel] | None:
         """Process single record with rate limiting."""
 
         async with self._semaphore:
@@ -91,7 +88,7 @@ class InferenceClient(ComponentFactory):
             }  # and isinstance(v, str | int | float | bool)
 
             sysmsg = self.model.get_prompt()
-            usrmsg = json.dumps(filtered_record, indent=2, cls=DateTimeEncoder, ensure_ascii=True)
+            usrmsg = json.dumps(filtered_record, cls=DateTimeEncoder, ensure_ascii=True)
 
             messages = [
                 {"role": "system", "content": sysmsg},
@@ -99,7 +96,7 @@ class InferenceClient(ComponentFactory):
             ]
 
             logger.debug(
-                f"Processing messages: {json.dumps(messages, indent=2, cls=DateTimeEncoder)}"
+                f"Processing messages: {json.dumps(messages, indent=2, cls=DateTimeEncoder, ensure_ascii=True)}"
             )
             completion: ChatCompletion = await self.client.beta.chat.completions.parse(
                 messages=messages,
@@ -118,8 +115,7 @@ class InferenceClient(ComponentFactory):
             logger.debug(f"Completion content: {content}")
 
             try:
-                result = self.model(**json.loads(content))
-                return result
+                return self.model(**json.loads(content))
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
                 return None
@@ -129,12 +125,12 @@ class InferenceClient(ComponentFactory):
         if not len(records):
             return pa.Table.from_pylist([])
 
-        # Get index field
+        # Get metadata
         index_col = records.schema.metadata.get(b"index").decode()
 
         # Create tasks for valid records
         tasks = []
-        for record in records:
+        for record in records.to_pylist():
             tasks.append(self._process_record(record))
 
         # Process records concurrently
@@ -150,10 +146,15 @@ class InferenceClient(ComponentFactory):
 
         # Create table and cast index field to match source schema
         schema = ArrowConverter.to_arrow_schema(self.model)
-        table = pa.Table.from_pylist(results, schema=schema).with_column(
-            records.filter(pa.array(mask).column(index_col)),
+        df = pa.Table.from_pylist(results, schema=schema).append_column(
+            index_col,
+            records.filter(pa.array(mask)).column(index_col),
         )
-        return table
+        metadata = {
+            "index": index_col,
+        }
+        df.replace_schema_metadata(metadata)
+        return df
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""

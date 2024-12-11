@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 
 import aioboto3
@@ -118,26 +119,11 @@ class AWSConnector(ComponentFactory):
                 logger.debug(f"No records found in {source.table}")
                 return None
 
-            metadata = {
-                "index": source.index_field,
-                "datetime": source.datetime_field,
-            }
-            df = df.replace_schema_metadata(metadata)
-
             logger.info(f"Read {len(df)} records from {source.table}")
             return df
         except Exception as e:
             logger.error(f"Error reading {source.table}: {e}")
             return None
-
-    async def drop_target_table(self) -> None:
-        """Drop the target table if it exists."""
-        try:
-            catalog = await self.catalog
-            catalog.drop_table((self.config.target.database, self.config.target.table))
-            logger.info(f"Dropped table {self.config.target.database}.{self.config.target.table}")
-        except NoSuchTableError:
-            logger.info("Target table does not exist, nothing to drop")
 
     async def read(self, drop: bool = False) -> pa.Table:
         """Read records from source tables."""
@@ -160,27 +146,37 @@ class AWSConnector(ComponentFactory):
         processed = await self._get_processed_records()
 
         # Filter each source table before joining
-        filtered_tables = []
-        for table, config in zip(tables, self.config.source.tables, strict=False):
-            mask = [
-                idx not in processed or dt > processed[idx]
-                for idx, dt in zip(
-                    table.column(config.index_field).to_pylist(),
-                    table.column(config.datetime_field).to_pylist(),
-                    strict=False,
-                )
-            ]
-            filtered_tables.append(table.filter(pa.array(mask)))
+        if processed and len(processed) > 0:
+            filtered_tables = []
+            for table, config in zip(tables, self.config.source.tables, strict=False):
+                mask = [
+                    idx not in processed or dt > processed[idx]
+                    for idx, dt in zip(
+                        table.column(config.index_field).to_pylist(),
+                        table.column(config.datetime_field).to_pylist(),
+                        strict=False,
+                    )
+                ]
+                filtered_tables.append(table.filter(pa.array(mask)))
+        else:
+            filtered_tables = tables
 
         # Join filtered tables
-        result = filtered_tables[0]
+        df = filtered_tables[0]
         for table in filtered_tables[1:]:
-            result = result.join(table, keys=self.config.target.index_field)
+            df = df.join(table, keys=self.config.target.index_field)
 
-        logger.info(f"Returning {self.config.source.max_records}/{len(result)}")
-        return result.slice(
-            0,
-        )
+        logger.info(f"Returning {self.config.source.max_records}/{len(df)}")
+
+        # add metadata
+        metadata = {
+            "index": self.config.target.index_field,
+        }
+        df = df.replace_schema_metadata(metadata)
+
+        # get random selection of records
+        indices = random.sample(range(table.num_rows), k=self.config.source.max_records)
+        return df.take(indices)
 
     async def write(
         self,
@@ -193,38 +189,42 @@ class AWSConnector(ComponentFactory):
         if not now:
             now = datetime.now()
 
-        # Add processing timestamp
-        timestamp_field = pa.field(
-            self.config.target.datetime_field, pa.timestamp("us"), nullable=False
-        )
-        records = records.append_column(
-            timestamp_field,
-            pa.array([now] * len(records), type=pa.timestamp("us")),
-        )
-
         catalog = await self.catalog
+        table_identifier = (
+            self.config.target.database,
+            self.config.target.table,
+        )
+        datetime_field = pa.field(
+            self.config.target.datetime_field,
+            type=pa.timestamp("us"),
+            nullable=False,
+        )
         try:
-            table = catalog.load_table((self.config.target.database, self.config.target.table))
+            table = catalog.load_table(table_identifier)
         except NoSuchTableError:
-            # Get the field type from the records schema
-            index_field = records.schema.field(self.config.target.index_field)
+            schema = IcebergConverter.to_iceberg_schema(records.schema, datetime_field)
+            spec = IcebergConverter.to_partition_spec(self.config.target.partition_by)
 
-            converter = IcebergConverter(
-                model=model,
-                datetime_field=self.config.target.datetime_field,
-                partition_transforms=self.config.target.partition_by,
-                additional_fields={
-                    index_field.name: index_field.type,
-                },
-            )
-            schema = converter.to_iceberg_schema()
-            spec = converter.to_partition_spec(schema)
             table = catalog.create_table(
-                identifier=(self.config.target.database, self.config.target.table),
+                identifier=table_identifier,
                 schema=schema,
                 partition_spec=spec,
                 location=self.config.target.location,
             )
 
+        records = records.append_column(
+            datetime_field,
+            pa.array([now] * len(records)),
+        )
+
         # Write records to table
         table.append(records)
+
+    async def drop_target_table(self) -> None:
+        """Drop the target table if it exists."""
+        try:
+            catalog = await self.catalog
+            catalog.drop_table((self.config.target.database, self.config.target.table))
+            logger.info(f"Dropped table {self.config.target.database}.{self.config.target.table}")
+        except NoSuchTableError:
+            logger.info("Target table does not exist, nothing to drop")

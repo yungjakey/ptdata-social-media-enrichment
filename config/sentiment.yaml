@@ -12,7 +12,7 @@ connector:
       datetime_field: last_update_time
       index_field: post_key
     time_filter_hours: 300
-    max_records: 100  # Process in batches
+    max_records: 10  # Process in batches
     
   target:
     database: dev_gold
@@ -21,7 +21,9 @@ connector:
     index_field: post_key
     location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_sentiment
     partition_by:
+      - year
       - month
+      - day
 
 inference:
   workers: 20
