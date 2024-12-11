@@ -77,6 +77,8 @@ if __name__ == "__main__":
     # read model from args
     parser = argparse.ArgumentParser(description="Run sentiment analysis job")
     parser.add_argument("--model", type=str, default="sentiment", help="Model to use")
+    parser.add_argument("--drop", action="store_true", help="Drop target table if passed")
+
     args = parser.parse_args()
 
     # Load and validate configuration
@@ -88,7 +90,7 @@ if __name__ == "__main__":
 
     # Run job and measure time
     start = time.time()
-    asyncio.run(main(config, drop=False))  # Drop table for testing
+    asyncio.run(main(config, drop=args.drop))  # Drop table for testing
     end = time.time()
 
     logger.info(f"Workflow completed in {end - start:.2f} seconds")

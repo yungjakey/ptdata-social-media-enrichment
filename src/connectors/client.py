@@ -202,7 +202,6 @@ class AWSConnector(ComponentFactory):
             logger.debug(f"Creating schema from {records.schema} and {datetime_field.name}")
             schema = IcebergConverter.to_iceberg_schema(records.schema, datetime_field)
             spec = IcebergConverter.to_partition_spec(self.config.target.partition_by)
-
             table = catalog.create_table(
                 identifier=table_identifier,
                 schema=schema,
@@ -217,6 +216,9 @@ class AWSConnector(ComponentFactory):
 
         # Write records to table
         logger.info(f"Writing {records.schema}")
+        for r in records.to_pylist():
+            logger.debug(f"Writing {r}")
+
         table.append(records)
 
     async def drop_target_table(self) -> None:

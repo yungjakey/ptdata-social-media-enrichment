@@ -78,7 +78,7 @@ class InferenceClient(ComponentFactory):
         stop=tenacity.stop_after_attempt(5),
         reraise=True,
     )
-    async def _process_record(self, record: dict[str, type]) -> type[BaseModel] | None:
+    async def _process_record(self, record: dict[str, type]) -> dict[str, type] | None:
         """Process single record with rate limiting."""
 
         async with self._semaphore:
@@ -112,7 +112,7 @@ class InferenceClient(ComponentFactory):
             logger.debug(f"Completion content: {content}")
 
             try:
-                return self.model(**json.loads(content))
+                return json.loads(content)
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
 
@@ -131,17 +131,20 @@ class InferenceClient(ComponentFactory):
         response = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Initialize results and mask
-        results = []
-        mask = [False] * len(records)  # Ensure mask length matches records length
-
-        # Populate results and mask
+        results, mask = [], [False] * len(records)  # Ensure mask length matches records length
         for i, (rec, res) in enumerate(zip(records.to_pylist(), response, strict=False)):
             if isinstance(res, Exception):
                 logger.error(f"Error processing record: {rec}")
                 continue  # Leave mask[i] as False
-
+            if not res or not all(res.keys()):
+                logger.warning(f"Empty response for record: {rec}")
+                continue
             results.append(res)
             mask[i] = True  # Mark the corresponding record as valid
+
+        if not len(results):
+            logger.warning("No valid responses found")
+            return pa.Table.from_pylist([])
 
         # Create the resulting table
         schema = ArrowConverter.to_arrow_schema(self.model)
@@ -149,13 +152,10 @@ class InferenceClient(ComponentFactory):
             index_col, records.filter(pa.array(mask)).column(index_col)
         )
 
-        # Add metadata
-        metadata = {"index": index_col}
-        result_table = result_table.replace_schema_metadata(metadata)
-
         logger.debug(f"Result table: {result_table.schema}")
+        metadata = {"index": index_col}
 
-        return result_table
+        return result_table.replace_schema_metadata(metadata)
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""

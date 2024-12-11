@@ -10,7 +10,7 @@ connector:
         datetime_field: last_update_time
         index_field: post_key
     time_filter_hours: 300
-    max_records: 20 # Process in batches
+    max_records: 500 # Process in batches
 
   target:
     database: dev_gold
