@@ -63,7 +63,6 @@ class IcebergConverter:
 ```yaml
 connector:
   region: eu-central-1
-  warehouse: my_warehouse
   
   source:
     tables:

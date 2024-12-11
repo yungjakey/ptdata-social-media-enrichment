@@ -81,10 +81,6 @@ class AWSConnectorConfig(BaseModel):
         default="eu-central-1",
         description="AWS region",
     )
-    warehouse: str = Field(
-        ...,
-        description="AWS Glue warehouse",
-    )
     source: SourceConfig = Field(
         ...,
         description="Source configuration",

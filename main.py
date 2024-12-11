@@ -11,7 +11,6 @@ from src.connectors import AWSConnector
 from src.inference import InferenceClient
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def signal_handler(sig, frame):
@@ -66,7 +65,7 @@ if __name__ == "__main__":
 
     # Configure logging
     logging.basicConfig(
-        level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Register signal handlers

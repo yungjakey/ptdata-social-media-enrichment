@@ -4,26 +4,26 @@ This directory contains AWS Lambda functions for processing social media data, w
 
 ## Architecture
 
-### Core Components
 
-#### `lambda_handler.py`
+
+### Job Structure
+Each job contains a config named appropriately:
+```
+config/
+├── sentiment.yaml
+└── ...
+```
+
+#### [`handler.py`](handler.py)
 - Generic Lambda handler for all job types
 - Dynamic job loading based on URL path
 - Secrets management for OpenAI credentials
 - Error handling and response formatting
-
-#### Job Structure
-Each job type (e.g., `sentiment/`) contains:
-```
-jobs/
-└── sentiment/
-    ├── config.yaml    # Job-specific configuration
-    └── main.py        # Job implementation
-```
+- Triggered via either HTTP or scheduled event
 
 ## Sentiment Analysis Job
 
-### Implementation (`sentiment/main.py`)
+### Implementation (`main.py`)
 ```python
 async def main(config: RootConfig, drop: bool = False) -> None:
     connector = AWSConnector.from_config(config.connector)
@@ -37,60 +37,60 @@ async def main(config: RootConfig, drop: bool = False) -> None:
             records=records, 
             index=connector.config.target.index_field
         )
-        
-        # Join and write results
-        results = records.select([connector.config.target.index_field])
-                        .join(results, keys=connector.config.target.index_field)
-        await connector.write(records=results, model=provider.model)
+        await connector.write(records=results)
 ```
 
-### Configuration (`sentiment/config.yaml`)
+### Configuration (`config/sentiment.yaml`)
 ```yaml
 connector:
-  warehouse: s3://aws-orf-social-media-analytics/dev/gold
-  
   source:
     tables:
-      - database: dev_gold
-        table: fact_social_media_reaction_post
-        datetime_field: last_update_time
-        index_field: post_key
-      - database: dev_gold
-        table: dim_post_details
-        datetime_field: last_update_time
-        index_field: post_key
+    - database: prod_gold
+      table: fact_social_media_reaction_post
+      datetime_field: last_update_time
+      index_field: post_key
+    - database: prod_gold
+      table: dim_post_details
+      datetime_field: last_update_time
+      index_field: post_key
     time_filter_hours: 300
-    max_records: 30  # Batch size
+    max_records: 10  # Process in batches
     
   target:
-    database: dev_test
+    database: dev_gold
     table: social_media_sentiment
     datetime_field: written_at
     index_field: post_key
+    location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_sentiment
     partition_by:
       - year
+      - month
+      - day
 
 inference:
   workers: 20
   response_format: sentiment
   exclude_fields:
-    - post_key
-    - hashtag_key
-    - date_key
-    - channel_key
-    - last_update_time
+  - id  
+  - post_key
+  - hashtag_key
+  - date_key
+  - channel_key
+  - last_update_time  
+  - post_attachment_name  
+  - post_link
+  - image_link
 ```
 
 ## Lambda Integration
 
 ### URL Pattern
 ```
-POST /sentiment?drop=false
+POST /sentiment
 ```
 
 ### Environment Variables
 - `OPENAI_SECRET_NAME`: Name of AWS Secrets Manager secret
-- `AWS_REGION`: AWS region (default: eu-central-1)
 
 ### Secret Structure
 ```json
@@ -102,32 +102,12 @@ POST /sentiment?drop=false
 
 ## Features
 
-### Dynamic Job Loading
-```python
-# Load job-specific module and config
-module = import_module(f"jobs.{model_type}.main")
-config = load_config(model_type)
-main_func = module.main
-```
-
-### Error Handling
-- Configuration validation
-- AWS service errors
-- Processing errors
-- HTTP status codes
-
-### Resource Management
-- Signal handling for graceful shutdown
-- Async context managers
-- Proper cleanup
-
 ## Development
 
 ### Local Testing
 ```bash
 # Run locally
-cd jobs/sentiment
-python main.py
+python main.py --model sentiment
 
 # Test with SAM
 sam local invoke -e events/sentiment.json

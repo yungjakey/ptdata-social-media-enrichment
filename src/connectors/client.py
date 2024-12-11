@@ -15,7 +15,6 @@ from src.common.utils import IcebergConverter
 from .config import AWSConnectorConfig
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class AWSConnector(ComponentFactory):

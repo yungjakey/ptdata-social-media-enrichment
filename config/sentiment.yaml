@@ -1,13 +1,11 @@
 connector:
-  warehouse: s3://aws-orf-social-media-analytics/dev/gold
-
   source:
     tables:
-    - database: dev_gold
+    - database: prod_gold
       table: fact_social_media_reaction_post
       datetime_field: last_update_time
       index_field: post_key
-    - database: dev_gold
+    - database: prod_gold
       table: dim_post_details
       datetime_field: last_update_time
       index_field: post_key

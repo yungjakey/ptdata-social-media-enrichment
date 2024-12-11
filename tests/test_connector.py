@@ -35,7 +35,6 @@ def create_mock_data(size: int = 10) -> pa.Table:
 async def test_connector() -> None:
     """Test AWS connector."""
     config = {
-        "warehouse": "s3://aws-orf-social-media-analytics/dev/test",
         "source": {
             "tables": [
                 {
