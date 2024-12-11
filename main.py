@@ -19,7 +19,7 @@ def signal_handler(sig, frame):
     exit(0)
 
 
-async def main(config: dict[str, type], drop: bool = False) -> None:
+async def main(config: dict[str, type], drop: bool = False) -> int:
     """Run the main process."""
     logger.info("Starting process")
 
@@ -56,6 +56,8 @@ async def main(config: dict[str, type], drop: bool = False) -> None:
     # Write results with current UTC timestamp
     await connector.write(records=results, model=provider.model)
     logger.info(f"Wrote {len(results)} records to destination")
+
+    return len(results)
 
 
 if __name__ == "__main__":

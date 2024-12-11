@@ -12,7 +12,9 @@ from pydantic import ValidationError
 from main import main
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 
 def load_config(model_type: str) -> dict:
@@ -61,11 +63,11 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         # Load config and run main
         config = load_config(model_type)
-        asyncio.run(main(config, drop=False))
+        n = asyncio.run(main(config, drop=False))
 
         return {
             "statusCode": 200,
-            "body": json.dumps({"message": f"Successfully processed {model_type} records"}),
+            "body": json.dumps({"message": f"Successfully applied {model_type} to {n} records"}),
         }
     except ValidationError as e:
         logger.error(f"Config validation error: {e}")
