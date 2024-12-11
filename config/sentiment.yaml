@@ -1,38 +1,35 @@
 connector:
   source:
     tables:
-    - database: prod_gold
-      table: fact_social_media_reaction_post
-      datetime_field: last_update_time
-      index_field: post_key
-    - database: prod_gold
-      table: dim_post_details
-      datetime_field: last_update_time
-      index_field: post_key
+      - database: dev_gold
+        table: fact_social_media_reaction_post
+        datetime_field: last_update_time
+        index_field: post_key
+      - database: dev_gold
+        table: dim_post_details
+        datetime_field: last_update_time
+        index_field: post_key
     time_filter_hours: 300
-    max_records: 10  # Process in batches
-    
+    max_records: 10 # Process in batches
+
   target:
     database: dev_gold
     table: social_media_sentiment
     datetime_field: written_at
     index_field: post_key
     location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_sentiment
-    partition_by:
-      - year
-      - month
-      - day
+    partition_by: month
 
 inference:
   workers: 20
   response_format: sentiment
   exclude_fields:
-  - id  
-  - post_key
-  - hashtag_key
-  - date_key
-  - channel_key
-  - last_update_time  
-  - post_attachment_name  
-  - post_link
-  - image_link
+    - id
+    - post_key
+    - hashtag_key
+    - date_key
+    - channel_key
+    - last_update_time
+    - post_attachment_name
+    - post_link
+    - image_link

@@ -84,7 +84,7 @@ async with InferenceClient(config) as client:
 ```python
 # Each record is processed with the model's system prompt
 sysmsg = self.model.get_prompt()
-usrmsg = json.dumps(filtered_record, indent=2, cls=DateTimeEncoder)
+usrmsg = json.dumps(filtered_record, indent=2, cls=CustomEncoder)
 
 messages = [
     {"role": "system", "content": sysmsg},

@@ -13,9 +13,8 @@ from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
-from src.common import DateTimeEncoder
 from src.common.component import ComponentFactory
-from src.common.utils import ArrowConverter
+from src.common.utils import ArrowConverter, CustomEncoder
 
 from .config import InferenceConfig
 
@@ -37,7 +36,7 @@ class InferenceClient(ComponentFactory):
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.workers)
         self._tasks: set[asyncio.Task] = set()  # Track active tasks
 
-        logger.debug(f"Inference client in  itialized with config: {config}")
+        logger.debug(f"Inference client initialized with config: {config}")
 
     _config = InferenceConfig
 
@@ -88,16 +87,14 @@ class InferenceClient(ComponentFactory):
             }  # and isinstance(v, str | int | float | bool)
 
             sysmsg = self.model.get_prompt()
-            usrmsg = json.dumps(filtered_record, cls=DateTimeEncoder, ensure_ascii=True)
+            usrmsg = json.dumps(filtered_record, cls=CustomEncoder, ensure_ascii=True)
 
             messages = [
                 {"role": "system", "content": sysmsg},
                 {"role": "user", "content": usrmsg},
             ]
 
-            logger.debug(
-                f"Processing messages: {json.dumps(messages, indent=2, cls=DateTimeEncoder, ensure_ascii=True)}"
-            )
+            logger.debug(f"Processing messages: {json.dumps(messages, indent=2)}")
             completion: ChatCompletion = await self.client.beta.chat.completions.parse(
                 messages=messages,
                 response_format=self.model,
@@ -118,7 +115,6 @@ class InferenceClient(ComponentFactory):
                 return self.model(**json.loads(content))
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON response: {content}") from e
-                return None
 
     async def process_batch(self, records: pa.Table) -> pa.Table:
         """Process a batch of records."""
@@ -128,33 +124,38 @@ class InferenceClient(ComponentFactory):
         # Get metadata
         index_col = records.schema.metadata.get(b"index").decode()
 
-        # Create tasks for valid records
-        tasks = []
-        for record in records.to_pylist():
-            tasks.append(self._process_record(record))
+        # Create tasks for processing records
+        tasks = [self._process_record(record) for record in records.to_pylist()]
 
         # Process records concurrently
         response = await asyncio.gather(*tasks, return_exceptions=True)
-        results, mask = [], []
-        for rec, res in zip(records, response, strict=False):
+
+        # Initialize results and mask
+        results = []
+        mask = [False] * len(records)  # Ensure mask length matches records length
+
+        # Populate results and mask
+        for i, (rec, res) in enumerate(zip(records.to_pylist(), response, strict=False)):
             if isinstance(res, Exception):
                 logger.error(f"Error processing record: {rec}")
-                mask.append(False)
-            if res:
-                results.append(res)
-                mask.append(True)
+                continue  # Leave mask[i] as False
 
-        # Create table and cast index field to match source schema
+            results.append(res)
+            mask[i] = True  # Mark the corresponding record as valid
+
+        # Create the resulting table
         schema = ArrowConverter.to_arrow_schema(self.model)
-        df = pa.Table.from_pylist(results, schema=schema).append_column(
-            index_col,
-            records.filter(pa.array(mask)).column(index_col),
+        result_table = pa.Table.from_pylist(results, schema=schema).append_column(
+            index_col, records.filter(pa.array(mask)).column(index_col)
         )
-        metadata = {
-            "index": index_col,
-        }
-        df.replace_schema_metadata(metadata)
-        return df
+
+        # Add metadata
+        metadata = {"index": index_col}
+        result_table = result_table.replace_schema_metadata(metadata)
+
+        logger.debug(f"Result table: {result_table.schema}")
+
+        return result_table
 
     async def __aenter__(self) -> InferenceClient:
         """Async context manager entry."""

@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 
 import aioboto3
 import pyarrow as pa
-from pydantic import BaseModel
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.exceptions import NoSuchTableError
 
@@ -180,7 +179,6 @@ class AWSConnector(ComponentFactory):
     async def write(
         self,
         records: pa.Table,
-        model: type[BaseModel],
         now: datetime | None = None,
     ) -> None:
         """Write records to target table."""
@@ -201,6 +199,7 @@ class AWSConnector(ComponentFactory):
         try:
             table = catalog.load_table(table_identifier)
         except NoSuchTableError:
+            logger.debug(f"Creating schema from {records.schema} and {datetime_field.name}")
             schema = IcebergConverter.to_iceberg_schema(records.schema, datetime_field)
             spec = IcebergConverter.to_partition_spec(self.config.target.partition_by)
 
@@ -217,6 +216,7 @@ class AWSConnector(ComponentFactory):
         )
 
         # Write records to table
+        logger.info(f"Writing {records.schema}")
         table.append(records)
 
     async def drop_target_table(self) -> None:

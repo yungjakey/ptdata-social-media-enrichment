@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 
 import pyarrow as pa
@@ -12,10 +13,29 @@ from pyiceberg.types import (
     BooleanType,
     DateType,
     DoubleType,
+    FloatType,
+    IntegerType,
     LongType,
     StringType,
     TimestampType,
 )
+
+
+class CustomEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # Handle datetime
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+
+        # Handle bytes
+        elif isinstance(obj, bytes):
+            try:
+                return obj.decode("ascii")
+            except UnicodeDecodeError:
+                return obj.hex()
+
+        # Handle other types by falling back to the parent method
+        return super().default(obj)
 
 
 class ArrowConverter:
@@ -61,30 +81,54 @@ class IcebergConverter:
     }
 
     @staticmethod
-    def _get_iceberg_type(arrow_type):  #  # noqa: C901
+    def _get_iceberg_type(arrow_type):  # noqa: C901
+        """Map PyArrow types to Iceberg types."""
+        # Integer types
+        if arrow_type == pa.int32():
+            return IntegerType()
         if arrow_type == pa.int64():
             return LongType()
-        if arrow_type == pa.string():
-            return StringType()
+
+        # Floating-point types
         if arrow_type == pa.float64():
             return DoubleType()
+        if arrow_type == pa.float32():
+            return FloatType()
+
+        # Boolean type
         if arrow_type == pa.bool_():
             return BooleanType()
-        if arrow_type == pa.timestamp("us"):
+
+        # String types
+        if arrow_type == pa.string():
+            return StringType()
+
+        # Binary types
+        if arrow_type == pa.binary() or arrow_type == pa.large_binary():
+            return BinaryType()
+
+        # Timestamp types
+        if (
+            arrow_type == pa.timestamp("us")
+            or arrow_type == pa.timestamp("us", tz="UTC")
+            or arrow_type == pa.timestamp("us", tz=None)
+        ):
             return TimestampType()
+
+        # Date type
         if arrow_type == pa.date32():
             return DateType()
-        if arrow_type == pa.binary():
-            return BinaryType()
-        raise ValueError(f"Unsupported Arrow type: {arrow_type}")
+
+        # Default to string if no matching type is found
+        return StringType()
 
     @classmethod
     def to_iceberg_schema(cls, schema: pa.Schema, datetime_field: pa.Field) -> Schema:
         fields = [
             NestedField(
                 name=datetime_field.name,
-                source_id=0,
-                source_type=cls._get_iceberg_type(datetime_field.type),
+                field_id=0,
+                field_type=cls._get_iceberg_type(datetime_field.type),
                 required=not datetime_field.nullable,
             )
         ]
@@ -93,30 +137,29 @@ class IcebergConverter:
             fields.append(
                 NestedField(
                     name=field.name,
-                    source_id=i + 1,
-                    source_type=cls._get_iceberg_type(field.type),
+                    field_id=i + 1,
+                    field_type=cls._get_iceberg_type(field.type),
                     required=not field.nullable,
                 )
             )
-        return Schema(fields)
+        return Schema(*fields)
 
     @classmethod
     def to_partition_spec(
         cls,
-        transformations: list[dict],
+        transformation: str,
     ) -> PartitionSpec:
         partitions = []
-        for n in transformations:
-            if (fn := cls.PARTITION_TRANSFORMATIONS.get(n)) is None:
-                raise ValueError(f"Unsupported partition transformation: {n}")
+        if (fn := cls.PARTITION_TRANSFORMATIONS.get(transformation)) is None:
+            raise ValueError(f"Unsupported partition transformation: {transformation}")
 
-            partitions.append(
-                PartitionField(
-                    name=n,
-                    source_id=0,
-                    field_id=0,
-                    transform=fn,
-                )
+        partitions.append(
+            PartitionField(
+                name=transformation,
+                source_id=0,
+                field_id=1001,
+                transform=fn,
             )
+        )
 
-        return PartitionSpec(partitions)
+        return PartitionSpec(*partitions)

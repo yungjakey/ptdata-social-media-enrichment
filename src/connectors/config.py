@@ -28,7 +28,7 @@ class TableConfig(BaseModel):
         default=None,
         description="S3 location for table",
     )
-    partition_by: list[str] | None = Field(
+    partition_by: str | None = Field(
         default=None,
         description="Fields to partition by",
     )
@@ -48,9 +48,7 @@ class SourceConfig(BaseModel):
         default=None, description="Maximum number of records to process per batch", ge=1
     )
 
-    @model_validator(
-        mode="after",
-    )
+    @model_validator(mode="after")
     def validate_index_fields_match(self) -> SourceConfig:
         """Validate that all tables use the same index field."""
         if not self.tables:

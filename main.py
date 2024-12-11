@@ -37,9 +37,9 @@ async def main(config: dict[str, type], drop: bool = False) -> int:
     logger.debug(f"Source schema: {records.schema}")
 
     # check
-    if not records:
+    if not records or not records.num_rows:
         logger.info("No records found to process, exiting")
-        return
+        return 0
 
     # Process records
     async with InferenceClient.from_config(config.inference) as provider:
@@ -49,15 +49,13 @@ async def main(config: dict[str, type], drop: bool = False) -> int:
         logger.debug(f"Result schema: {results.schema}")
 
     # check
-    if not results:
+    if not results or not results.num_rows:
         logger.warning("No valid records to process, exiting")
-        return
+        return 0
 
     # Write results with current UTC timestamp
-    await connector.write(records=results, model=provider.model)
+    await connector.write(records=results)
     logger.info(f"Wrote {len(results)} records to destination")
-
-    return len(results)
 
 
 if __name__ == "__main__":
@@ -79,20 +77,16 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="sentiment", help="Model to use")
     args = parser.parse_args()
 
-    try:
-        # Load and validate configuration
-        config_path = os.path.join("config", f"{args.model}.yaml")
-        logger.info(f"Loading config from {config_path}")
+    # Load and validate configuration
+    config_path = os.path.join("config", f"{args.model}.yaml")
+    logger.info(f"Loading config from {config_path}")
 
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
 
-        # Run job and measure time
-        start = time.time()
-        asyncio.run(main(config, drop=False))  # Drop table for testing
-        end = time.time()
+    # Run job and measure time
+    start = time.time()
+    asyncio.run(main(config, drop=True))  # Drop table for testing
+    end = time.time()
 
-        logger.info(f"Workflow completed in {end - start:.2f} seconds")
-    except Exception as e:
-        logger.error(f"Error running job: {e}", exc_info=True)
-        raise
+    logger.info(f"Workflow completed in {end - start:.2f} seconds")
