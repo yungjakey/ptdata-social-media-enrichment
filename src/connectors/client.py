@@ -34,6 +34,7 @@ class AWSConnector(ComponentFactory):
             # In Lambda, this will use the environment credentials
             # Locally, this will use the default credential chain (including SSO)
             self._session = aioboto3.Session(region_name=self.config.region)
+
         return self._session
 
     @property
@@ -41,9 +42,10 @@ class AWSConnector(ComponentFactory):
         """Get the catalog instance."""
         if self._catalog is None:
             # Get credentials from boto3 session
+            credentials = await self.session.get_credentials()
+            frozen_credentials = await credentials.get_frozen_credentials()
+
             try:
-                credentials = await self.session.get_credentials()
-                frozen_credentials = await credentials.get_frozen_credentials()
                 self._catalog = load_catalog(
                     type="glue",
                     uri=f"glue://{self.config.region}",
@@ -126,7 +128,7 @@ class AWSConnector(ComponentFactory):
             logger.error(f"Error reading {source.table}: {e}")
             return None
 
-    async def read(self, drop: bool = False) -> pa.Table:
+    async def read(self, max_records: int = 100, drop: bool = False) -> pa.Table:
         """Read records from source tables."""
 
         if not await self.catalog:
@@ -171,7 +173,7 @@ class AWSConnector(ComponentFactory):
         for table in filtered_tables[1:]:
             df = df.join(table, keys=self.config.target.index_field)
 
-        logger.info(f"Returning {self.config.source.max_records}/{len(df)}")
+        logger.info(f"Returning {max_records}/{len(df)}")
 
         # add metadata
         metadata = {

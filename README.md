@@ -4,6 +4,7 @@ A modular AWS Lambda-based system for enriching social media data using Azure Op
 
 ## TODO!
 
+- [ ] Disallow public trigger?!
 - [ ] Fix timeout
 - [ ] Github workflow for redeploying on change
 

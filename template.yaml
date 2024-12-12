@@ -59,7 +59,7 @@ Resources:
         HttpApi:
           Type: HttpApi
           Properties:
-            Path: /sentiment
+            Path: /*/
             Method: POST
             PayloadFormatVersion: "2.0"
         Schedule:

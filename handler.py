@@ -55,16 +55,37 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
         os.environ["OPENAI_API_BASE"] = secrets["OPENAI_API_BASE"]
 
+        # build args
+        kwargs = {}
+
         # Get model type from path
         path = event.get("path", "")
-        model_type = path.strip("/")  # e.g., "sentiment" from "/sentiment"
-        if not model_type:
+        if (model_type := path.strip("/")) is not None:
+            try:
+                kwargs["config"] = load_config(model_type)
+            except FileNotFoundError:
+                logger.error(f"Config file not found for model type: {model_type}")
+                raise
+        else:
             raise ValueError("Model type not specified in path")
 
-        # Load config and run main
-        config = load_config(model_type)
-        n = asyncio.run(main(config, drop=False))
+        # Get query parameters from query string
+        querystring = event.get("queryStringParameters", {})
+        if (max_records := querystring.get("max_records")) is not None:
+            try:
+                kwargs["max_records"] = int(max_records)
+            except Exception as e:
+                logger.error(f"Invalid max_records parameter, using default: {e}")
 
+        if (drop := querystring.get("drop")) is not None:
+            try:
+                if drop.lower() == "true":
+                    kwargs["drop"] = True
+            except Exception as e:
+                logger.error(f"Invalid drop parameter, using default: {e}")
+
+        # Load config and run main
+        n = asyncio.run(main(**kwargs))
         return {
             "statusCode": 200,
             "body": json.dumps({"message": f"Successfully applied {model_type} to {n} records"}),

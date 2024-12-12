@@ -4,10 +4,8 @@ This directory contains AWS Lambda functions for processing social media data, w
 
 ## Architecture
 
-
-
 ### Job Structure
-Each job contains a config named appropriately:
+Each job contains a config named accordingly:
 ```
 config/
 ├── sentiment.yaml
@@ -21,24 +19,12 @@ config/
 - Error handling and response formatting
 - Triggered via either HTTP or scheduled event
 
-## Sentiment Analysis Job
 
-### Implementation (`main.py`)
-```python
-async def main(config: RootConfig, drop: bool = False) -> None:
-    connector = AWSConnector.from_config(config.connector)
-    
-    async with InferenceClient.from_config(config.inference) as provider:
-        # Read source data
-        records = await connector.read(drop=drop)
-        
-        # Process with OpenAI
-        results = await provider.process_batch(
-            records=records, 
-            index=connector.config.target.index_field
-        )
-        await connector.write(records=results)
-```
+#### [`main.py`](main.py)
+- Generic entrypoint for all job types
+- Handles reading and processing data
+- Handles writing results to target location
+
 
 ### Configuration (`config/sentiment.yaml`)
 ```yaml
@@ -82,25 +68,39 @@ inference:
   - image_link
 ```
 
-## Lambda Integration
-
-### URL Pattern
+### Implementation (`main.py`)
+```python
+async def main(config: RootConfig, drop: bool = False) -> None:
+    connector = AWSConnector.from_config(config.connector)
+    
+    async with InferenceClient.from_config(config.inference) as provider:
+        # Read source data
+        records = await connector.read(drop=drop)
+        
+        # Process with OpenAI
+        results = await provider.process_batch(
+            records=records, 
+            index=connector.config.target.index_field
+        )
+        await connector.write(records=results)
 ```
-POST /sentiment
+
+### Lambda Integration
+
+#### URL Pattern
+```
+POST /{model_name}
 ```
 
-### Environment Variables
+#### Environment Variables
 - `OPENAI_SECRET_NAME`: Name of AWS Secrets Manager secret
 
-### Secret Structure
 ```json
 {
     "OPENAI_API_KEY": "sk-...",
     "OPENAI_API_BASE": "https://..."
 }
 ```
-
-## Features
 
 ## Development
 
@@ -110,36 +110,11 @@ POST /sentiment
 python main.py --model sentiment
 
 # Test with SAM
-sam local invoke -e events/sentiment.json
+sam local invoke -e events/sentiment.json -n events/env.json
 ```
+
 
 ### Deployment
 ```bash
-# Deploy specific function
-sam deploy --template-file template.yaml
-
-# Update configuration
-aws s3 cp config.yaml s3://bucket/config/
+sam deploy
 ```
-
-## Best Practices
-
-1. **Configuration**
-   - Use YAML for readability
-   - Validate with Pydantic
-   - Separate source/target configs
-
-2. **Error Handling**
-   - Proper exception types
-   - Detailed error messages
-   - Status code mapping
-
-3. **Performance**
-   - Batch processing
-   - Concurrent workers
-   - Resource cleanup
-
-4. **Security**
-   - Secrets management
-   - IAM roles
-   - Input validation

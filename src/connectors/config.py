@@ -44,9 +44,6 @@ class SourceConfig(BaseModel):
     time_filter_hours: int | None = Field(
         default=None, description="Only process records updated within this time window", ge=1
     )
-    max_records: int | None = Field(
-        default=None, description="Maximum number of records to process per batch", ge=1
-    )
 
     @model_validator(mode="after")
     def validate_index_fields_match(self) -> SourceConfig:

@@ -9,8 +9,7 @@ connector:
         table: dim_post_details
         datetime_field: last_update_time
         index_field: post_key
-    time_filter_hours: 300
-    max_records: 100 # Process in batches
+    time_filter_hours: 1
 
   target:
     database: dev_gold

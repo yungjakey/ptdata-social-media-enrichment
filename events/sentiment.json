@@ -1,0 +1,8 @@
+{
+    "resource": "/sentiment",
+    "path": "/sentiment",
+    "httpMethod": "POST",
+    "headers": {
+        "Content-Type": "application/json"
+    }
+}
