@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import aioboto3
 import pyarrow as pa
-from pyiceberg.catalog import Catalog, load_catalog
+from pyiceberg.catalog import load_catalog
 from pyiceberg.exceptions import NoSuchTableError
 
 from src.common.component import ComponentFactory
@@ -16,55 +16,47 @@ from .config import AWSConnectorConfig
 logger = logging.getLogger(__name__)
 
 
-class AWSConnector(ComponentFactory):
+class AWSConnector(ComponentFactory[AWSConnectorConfig]):
     """AWS connector implementation."""
 
-    _config = AWSConnectorConfig
+    _config_type = AWSConnectorConfig
 
     def __init__(self, config: AWSConnectorConfig) -> None:
         """Initialize AWS connector."""
         super().__init__(config)
-        self._session = None
-        self._catalog = None
-        self.cutoff_time = datetime.now() - timedelta(hours=self.config.source.time_filter_hours)
+        self.session = aioboto3.Session(region_name=self.config.region)
 
-    @property
-    def session(self) -> aioboto3.Session:
-        if self._session is None:
-            # In Lambda, this will use the environment credentials
-            # Locally, this will use the default credential chain (including SSO)
-            self._session = aioboto3.Session(region_name=self.config.region)
+        credentials = self.session.get_credentials()
+        if not credentials:
+            raise Exception("No credentials found")
 
-        return self._session
+        frozen_credentials = credentials.get_frozen_credentials()
 
-    @property
-    async def catalog(self) -> Catalog:
-        """Get the catalog instance."""
-        if self._catalog is None:
-            # Get credentials from boto3 session
-            credentials = await self.session.get_credentials()
-            frozen_credentials = await credentials.get_frozen_credentials()
+        try:
+            self.catalog = load_catalog(
+                type="glue",
+                uri=f"glue://{self.config.region}",
+                s3_file_io_impl="pyiceberg.io.s3.S3FileIO",
+                **{
+                    "s3.access-key-id": frozen_credentials.access_key,
+                    "s3.secret-access-key": frozen_credentials.secret_key,
+                    "s3.session-token": frozen_credentials.token,
+                    "s3.connect-timeout": 120,
+                },
+            )
+        except Exception as e:
+            raise Exception(f"Error loading catalog: {e}") from e
 
-            try:
-                self._catalog = load_catalog(
-                    type="glue",
-                    uri=f"glue://{self.config.region}",
-                    s3_file_io_impl="pyiceberg.io.s3.S3FileIO",
-                    **{
-                        "s3.access-key-id": frozen_credentials.access_key,
-                        "s3.secret-access-key": frozen_credentials.secret_key,
-                        "s3.session-token": frozen_credentials.token,
-                    },
-                )
-            except Exception as e:
-                logger.error(f"Error loading catalog: {e}")
-        return self._catalog
+        self.cutoff_time = datetime.now()
+        if self.config.source.time_filter_hours:
+            self.cutoff_time = datetime.now() - timedelta(
+                hours=self.config.source.time_filter_hours
+            )
 
     async def _get_processed_records(self) -> dict[str, datetime]:
         """Get mapping of index keys to their last processing time."""
         try:
-            catalog = await self.catalog
-            table = catalog.load_table((self.config.target.database, self.config.target.table))
+            table = self.catalog.load_table((self.config.target.database, self.config.target.table))
         except NoSuchTableError:
             logger.info("Target table does not exist yet")
             return {}
@@ -105,10 +97,9 @@ class AWSConnector(ComponentFactory):
 
     async def _get_source_table(self, idx: int) -> pa.Table | None:
         """Get records from a single source table."""
+        source = self.config.source.tables[idx]
         try:
-            source = self.config.source.tables[idx]
-            catalog = await self.catalog
-            table = catalog.load_table((source.database, source.table))
+            table = self.catalog.load_table((source.database, source.table))
 
             df = (
                 table.scan(
@@ -131,10 +122,6 @@ class AWSConnector(ComponentFactory):
     async def read(self, max_records: int = 100, drop: bool = False) -> pa.Table:
         """Read records from source tables."""
 
-        if not await self.catalog:
-            logger.error("Catalog not initialized")
-            return pa.Table.from_pylist([])
-
         if drop:
             await self.drop_target_table()
 
@@ -144,18 +131,19 @@ class AWSConnector(ComponentFactory):
             return_exceptions=True,
         )
 
-        for t in tables:
-            if isinstance(t, Exception | None):
-                logger.error(f"Error getting source table: {t}")
-                return pa.Table.from_pylist([])
-
         # Get mapping of index keys to last processing time in target table
         processed = await self._get_processed_records()
 
         # Filter each source table before joining
-        if processed and len(processed) > 0:
+        if not processed or len(processed) == 0:
+            filtered_tables = [t for t in tables if t and not isinstance(t, BaseException)]
+        else:
             filtered_tables = []
             for table, config in zip(tables, self.config.source.tables, strict=False):
+                if not table or isinstance(table, BaseException):
+                    logger.error(f"Error reading {config.table}: {table}")
+                    return pa.Table.from_pylist([])
+
                 mask = [
                     idx not in processed or dt > processed[idx]
                     for idx, dt in zip(
@@ -165,8 +153,6 @@ class AWSConnector(ComponentFactory):
                     )
                 ]
                 filtered_tables.append(table.filter(pa.array(mask)))
-        else:
-            filtered_tables = tables
 
         # Join filtered tables
         df = filtered_tables[0]
@@ -182,7 +168,7 @@ class AWSConnector(ComponentFactory):
         df = df.replace_schema_metadata(metadata)
 
         # get random selection of records
-        indices = random.sample(range(table.num_rows), k=self.config.source.max_records)
+        indices = random.sample(range(df.num_rows), k=max_records)
         return df.take(indices)
 
     async def write(
@@ -195,7 +181,6 @@ class AWSConnector(ComponentFactory):
         if not now:
             now = datetime.now()
 
-        catalog = await self.catalog
         table_identifier = (
             self.config.target.database,
             self.config.target.table,
@@ -207,17 +192,22 @@ class AWSConnector(ComponentFactory):
         )
 
         try:
-            table = catalog.load_table(table_identifier)
+            table = self.catalog.load_table(table_identifier)
         except NoSuchTableError:
             logger.debug(f"Creating schema from {records.schema} and {datetime_field.name}")
             schema = IcebergConverter.to_iceberg_schema(records.schema, datetime_field)
-            spec = IcebergConverter.to_partition_spec(self.config.target.partition_by)
-            table = catalog.create_table(
-                identifier=table_identifier,
-                schema=schema,
-                partition_spec=spec,
-                location=self.config.target.location,
-            )
+
+            kwargs = {
+                "identifier": table_identifier,
+                "schema": schema,
+                "location": self.config.target.location,
+            }
+            if self.config.target.partition_by:
+                kwargs["partition_spec"] = IcebergConverter.to_partition_spec(
+                    self.config.target.partition_by
+                )
+
+            table = self.catalog.create_table(**kwargs)
 
         records = records.append_column(
             datetime_field,
@@ -231,8 +221,7 @@ class AWSConnector(ComponentFactory):
     async def drop_target_table(self) -> None:
         """Drop the target table if it exists."""
         try:
-            catalog = await self.catalog
-            catalog.drop_table((self.config.target.database, self.config.target.table))
+            self.catalog.drop_table((self.config.target.database, self.config.target.table))
             logger.info(f"Dropped table {self.config.target.database}.{self.config.target.table}")
         except NoSuchTableError:
             logger.info("Target table does not exist, nothing to drop")

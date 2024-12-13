@@ -5,24 +5,25 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 
 import pyarrow as pa
 import tenacity
 from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
-from pydantic import BaseModel
 
 from src.common.component import ComponentFactory
 from src.common.utils import ArrowConverter, CustomEncoder
+from src.inference.models.base import BaseInferenceModel
 
 from .config import InferenceConfig
 
 logger = logging.getLogger(__name__)
 
 
-class InferenceClient(ComponentFactory):
+class InferenceClient(ComponentFactory[InferenceConfig]):
     """Manages inference client configuration."""
+
+    _config_type = InferenceConfig
 
     def __init__(self, config: InferenceConfig) -> None:
         """Initialize client."""
@@ -31,24 +32,12 @@ class InferenceClient(ComponentFactory):
         if not config.api_key or not config.api_base:
             raise ValueError("OPENAI_API_KEY and OPENAI_API_BASE must be set")
 
-        self.model: type[BaseModel] = self.config.response_format
+        self.model: type[BaseInferenceModel] = self.config.response_format
         self._client: AsyncAzureOpenAI | None = None
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.workers)
         self._tasks: set[asyncio.Task] = set()  # Track active tasks
 
         logger.debug(f"Inference client initialized with config: {config}")
-
-    _config = InferenceConfig
-
-    @classmethod
-    def from_config(cls, config: dict[str, type]) -> InferenceClient:
-        """Create client from config."""
-        if not config.get("api_key"):
-            config["api_key"] = os.getenv("OPENAI_API_KEY")
-        if not config.get("api_base"):
-            config["api_base"] = os.getenv("OPENAI_API_BASE")
-
-        return super().from_config(config)
 
     @property
     def client(self) -> AsyncAzureOpenAI:
@@ -83,13 +72,13 @@ class InferenceClient(ComponentFactory):
 
         async with self._semaphore:
             filtered_record = {
-                k: v for k, v in record.items() if k not in self.config.exclude_fields
+                k: v for k, v in record.items() if k in self.config.include_fields
             }  # and isinstance(v, str | int | float | bool)
 
             sysmsg = self.model.get_prompt()
             usrmsg = json.dumps(filtered_record, cls=CustomEncoder, ensure_ascii=True)
 
-            messages = [
+            messages: list = [
                 {"role": "system", "content": sysmsg},
                 {"role": "user", "content": usrmsg},
             ]
@@ -110,6 +99,9 @@ class InferenceClient(ComponentFactory):
 
             content = choice[0].message.content
             logger.debug(f"Completion content: {content}")
+
+            if not content:
+                raise ValueError("Empty completion content")
 
             try:
                 return json.loads(content)
@@ -133,7 +125,7 @@ class InferenceClient(ComponentFactory):
         # Initialize results and mask
         results, mask = [], [False] * len(records)  # Ensure mask length matches records length
         for i, (rec, res) in enumerate(zip(records.to_pylist(), response, strict=False)):
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 logger.error(f"Error processing record: {rec}")
                 continue  # Leave mask[i] as False
             if not res or not all(res.keys()):

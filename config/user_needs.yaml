@@ -2,10 +2,6 @@ connector:
   source:
     tables:
       - database: prod_gold
-        table: fact_social_media_reaction_post
-        datetime_field: last_update_time
-        index_field: post_key
-      - database: prod_gold
         table: dim_post_details
         datetime_field: last_update_time
         index_field: post_key
@@ -13,13 +9,14 @@ connector:
 
   target:
     database: dev_gold
-    table: social_media_sentiment
+    table: social_media_needs
     datetime_field: written_at
     index_field: post_key
-    location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_sentiment
+    location: s3://aws-orf-social-media-analytics/dev/gold/ai/social_media_needs
     partition_by: month
 
 inference:
   workers: 20
-  response_format: sentiment
+  response_format: user_needs
   include_fields:
+    - post_message

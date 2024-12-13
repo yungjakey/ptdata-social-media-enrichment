@@ -6,7 +6,7 @@ from datetime import date, datetime
 import pyarrow as pa
 from pydantic import BaseModel
 from pyiceberg.partitioning import PartitionField, PartitionSpec
-from pyiceberg.schema import NestedField, Schema
+from pyiceberg.schema import Schema
 from pyiceberg.transforms import DayTransform, MonthTransform, YearTransform
 from pyiceberg.types import (
     BinaryType,
@@ -16,26 +16,27 @@ from pyiceberg.types import (
     FloatType,
     IntegerType,
     LongType,
+    NestedField,
     StringType,
     TimestampType,
 )
 
 
 class CustomEncoder(json.JSONEncoder):
-    def default(self, obj):
+    def default(self, o):
         # Handle datetime
-        if isinstance(obj, datetime):
-            return obj.isoformat()
+        if isinstance(o, datetime):
+            return o.isoformat()
 
         # Handle bytes
-        elif isinstance(obj, bytes):
+        elif isinstance(o, bytes):
             try:
-                return obj.decode("ascii")
+                return o.decode("ascii")
             except UnicodeDecodeError:
-                return obj.hex()
+                return o.hex()
 
         # Handle other types by falling back to the parent method
-        return super().default(obj)
+        return super().default(o)
 
 
 class ArrowConverter:
@@ -59,7 +60,7 @@ class ArrowConverter:
         return pa.string()
 
     @classmethod
-    def to_dict(cls, model: type[BaseModel]) -> dict[str, type]:
+    def to_list(cls, model: type[BaseModel]) -> list[tuple[str, pa.DataType]]:
         """Convert Pydantic model to Arrow schema."""
         return [
             (name, cls._get_arrow_type(field.annotation))
@@ -68,7 +69,7 @@ class ArrowConverter:
 
     @classmethod
     def to_arrow_schema(cls, model: type[BaseModel]) -> pa.Schema:
-        return pa.schema(cls.to_dict(model))
+        return pa.schema(cls.to_list(model))
 
 
 class IcebergConverter:

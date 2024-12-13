@@ -4,5 +4,9 @@
     "httpMethod": "POST",
     "headers": {
         "Content-Type": "application/json"
+    },
+    "queryStringParameters": {
+        "worker": "10",
+        "drop": "false"
     }
 }

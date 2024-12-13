@@ -24,11 +24,11 @@ async def main(config: dict[str, type], max_records: int = 100, drop: bool = Fal
     logger.info("Starting process")
 
     # Validate config
-    config = RootConfig.model_validate(config)
-    logger.debug(f"Validated config: {config.model_dump_json(indent=2)}")
+    cfg = RootConfig(**config)
+    logger.debug(f"Validated config: {cfg.model_dump_json(indent=2)}")
 
     # Init connector
-    connector = AWSConnector.from_config(config.connector)
+    connector = AWSConnector.from_config(cfg.connector)
 
     # Read and process records
     logger.info("Reading data from source")
@@ -42,7 +42,7 @@ async def main(config: dict[str, type], max_records: int = 100, drop: bool = Fal
         return 0
 
     # Process records
-    async with InferenceClient.from_config(config.inference) as provider:
+    async with InferenceClient.from_config(cfg.inference) as provider:
         logger.info("Processing records")
         results = await provider.process_batch(records=records)
         logger.info(f"Processed {len(results)}/{len(records)} records")
@@ -79,7 +79,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="sentiment",
         help="Model to use",
     )
     parser.add_argument(

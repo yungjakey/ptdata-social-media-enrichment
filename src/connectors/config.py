@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.common.config import BaseConfig
+
 
 class TableConfig(BaseModel):
     """Common configuration for tables."""
@@ -42,7 +44,9 @@ class SourceConfig(BaseModel):
         description="Tables to read from",
     )
     time_filter_hours: int | None = Field(
-        default=None, description="Only process records updated within this time window", ge=1
+        default=None,
+        description="Only process records updated within this time window",
+        ge=1,
     )
 
     @model_validator(mode="after")
@@ -69,7 +73,7 @@ class TargetConfig(TableConfig):
     ...
 
 
-class AWSConnectorConfig(BaseModel):
+class AWSConnectorConfig(BaseConfig):
     """AWS connector configuration."""
 
     region: str = Field(
