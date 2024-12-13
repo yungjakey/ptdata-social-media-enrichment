@@ -22,7 +22,7 @@ class UserNeeds(BaseInferenceModel):
     def get_prompt():
         return (
             "You are a social media expert tasked with analyzing social media posts by viewing details and metrics. "
-            "Analyze the needs of the following social media post and provide a needs analysis result. "
+            "Analyze which needs the following social media post addresses and provide a needs analysis result. "
             "The needs analysis result should include the needs, needs score, and confidence. "
             "The needs score ranges from 0 to 1, where 0 indicates no needs, and 1 indicates very high needs. "
             "The confidence ranges from 0 to 1, where 0 indicates no confidence, and 1 indicates very high confidence."
