@@ -21,14 +21,6 @@ help:
 setup:
 	aws ecr create-repository --repository-name $(STACK_NAME) || true
 	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
-
-	GITHUB_USERNAME=$(shell git config --get remote.origin.url | sed -n 's#.*:\([^/]*\)/.*#\1#p')
-	GITHUB_REPOSITORY=$(shell basename -s .git `git config --get remote.origin.url`)
-	sed -e "s/{{AWS_ACCOUNT}}/$(AWS_ACCOUNT)/" \
-	    -e "s/{{GITHUB_USERNAME}}/$(GITHUB_USERNAME)/" \
-	    -e "s/{{GITHUB_REPOSITORY}}/$(GITHUB_REPOSITORY)/" \
-	    policy.template > trust-policy.json
-		
 	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
 	ROLE_ARN=$(shell aws iam get-role --role-name GitHubActionsRole --query 'Role.Arn' --output text)
 	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
