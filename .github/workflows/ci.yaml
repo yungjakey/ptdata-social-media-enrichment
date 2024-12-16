@@ -35,6 +35,12 @@ jobs:
       run: |
         poetry run pytest
 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::471112963254:role/GitHubActionsRole
+        aws-region: eu-central-1
+
     - name: Log in to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
