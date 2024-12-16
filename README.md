@@ -89,7 +89,7 @@ graph LR
 
 - Python 3.11+
 - Poetry for development dependency management
-- AWS SAM CLI
+- Docker for building and deploying images
 - AWS account with appropriate permissions
 
 ### Development Setup
@@ -108,14 +108,15 @@ poetry export --without-hashes --format=requirements.txt > requirements.txt
 ### Deployment
 
 ```bash
-# Build and deploy using SAM
+# Build and deploy using Docker
 make deploy
 ```
 
 This will:
 1. Export dependencies to requirements.txt
-2. Build the Lambda functions using SAM
-3. Deploy to AWS using CloudFormation
+2. Build the Docker image
+3. Push the Docker image to AWS ECR
+4. Deploy the Lambda functions using the Docker image
 
 ### Configuration
 
