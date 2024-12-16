@@ -8,29 +8,9 @@ S3_BUCKET = ptdata-lambda-artifacts
 help:
 	@echo "Available targets:"
 	@echo "  help            - Display this help message"
-	@echo "  poetry-install  - Install dependencies and create poetry.lock"
-	@echo "  clean-python    - Clean Python cache files"
-	@echo "  build           - Build the Docker image"
-	@echo "  deploy          - Deploy the Docker image"
-	@echo "  clean           - Clean up local resources"
-	@echo "  all             - Full deployment process"
-	@echo "  setup           - Create ECR repository and S3 bucket"
-.PHONY: help deploy clean poetry-install clean-python build deploy-lambda setup
 
-# Create ECR repository and S3 bucket
-setup:
-	aws ecr create-repository --repository-name $(STACK_NAME) || true
-	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
-	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
-	ROLE_ARN=$(shell aws iam get-role --role-name GitHubActionsRole --query 'Role.Arn' --output text)
-	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
-	rm trust-policy.json
+.PHONY: help requirements build push deploy all
 
-# Clean up local resources
-clean: clean-python
-	rm -rf .aws-sam/
-	rm -f requirements.txt
-	rm -f packaged.yaml
 
 # Install dependencies and create poetry.lock
 requirements:
@@ -51,4 +31,4 @@ deploy:
 	aws cloudformation package --template-file template.yaml --s3-bucket $(S3_BUCKET) --output-template-file packaged.yaml
 	aws cloudformation deploy --template-file packaged.yaml --stack-name $(STACK_NAME) --capabilities CAPABILITY_IAM
 
-all: requirements build pushdeploy
+all: requirements build push deploy
