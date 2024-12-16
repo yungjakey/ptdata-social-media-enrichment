@@ -22,25 +22,6 @@ setup:
 	aws ecr create-repository --repository-name $(STACK_NAME) || true
 	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
 
-# Install dependencies and create poetry.lock
-poetry-install:
-	poetry install --only main
-	poetry export --without-hashes -f requirements.txt -o requirements.txt
-
-# Clean Python cache files
-clean-python:
-	find . -type d -name "__pycache__" -exec rm -rf {} +
-	find . -type d -name ".pytest_cache" -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
-
-# Build the Docker image
-build: clean-python poetry-install
-	docker build -t $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest .
-
-# Deploy the Docker image
-deploy: build
-	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
-	docker push $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest
 
 # Clean up local resources
 clean: clean-python
@@ -48,8 +29,23 @@ clean: clean-python
 	rm -f requirements.txt
 	rm -f packaged.yaml
 
+# Install dependencies and create poetry.lock
+requirements:
+	poetry install --only main
+	poetry export --without-hashes -f requirements.txt -o requirements.txt
+
+# Build the Docker image
+build: requirements
+	docker build -t $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest .
+
+# Deploy the Docker image
+push: 
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
+	docker push $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest
+
 # Deploy AWS Lambda function
-deploy-lambda:
+deploy:
 	aws cloudformation package --template-file template.yaml --s3-bucket $(S3_BUCKET) --output-template-file packaged.yaml
 	aws cloudformation deploy --template-file packaged.yaml --stack-name $(STACK_NAME) --capabilities CAPABILITY_IAM
-all: deploy
+
+all: requirements build pushdeploy

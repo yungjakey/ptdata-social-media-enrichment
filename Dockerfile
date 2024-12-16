@@ -1,27 +1,29 @@
 FROM public.ecr.aws/lambda/python:3.11 AS builder
 
-WORKDIR /var/task
+# workdir
+WORKDIR ${LAMBDA_TASK_ROOT}
 
-# copy everything except .dockerignore content
+# install dependencies
 COPY . .
-
-# Install dependencies using Makefile
-RUN make poetry-install
+RUN pip install poetry && \
+    poetry self add poetry-plugin-export && \
+    poetry install --only main && \
+    poetry export --without-hashes -f requirements.txt -o requirements.txt
 
 # build lambda layer
 FROM public.ecr.aws/lambda/python:3.11 AS runner
 
+# workdir
 WORKDIR ${LAMBDA_TASK_ROOT}
 
 # install requirements
-COPY --from=builder /var/task/requirements.txt ./requirements.txt
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY --from=builder ${LAMBDA_TASK_ROOT}/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # copy source
-COPY --from=builder /var/task/config ./config
-COPY --from=builder /var/task/src ./src
-COPY --from=builder /var/task/main.py ./
-COPY --from=builder /var/task/handler.py ./
+COPY --from=builder ${LAMBDA_TASK_ROOT}/config ./config
+COPY --from=builder ${LAMBDA_TASK_ROOT}/src ./src
+COPY --from=builder ${LAMBDA_TASK_ROOT}/main.py ./
+COPY --from=builder ${LAMBDA_TASK_ROOT}/handler.py ./
 
 CMD ["handler.lambda_handler"]
