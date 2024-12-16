@@ -5,7 +5,7 @@ STACK_NAME = ptdata-social-media-enrichment
 S3_BUCKET = ptdata-lambda-artifacts
 
 # Build and deploy commands
-.PHONY: deploy clean poetry-install clean-python package
+.PHONY: deploy clean poetry-install clean-python build
 
 # Install dependencies and create poetry.lock
 poetry-install:
@@ -18,14 +18,14 @@ clean-python:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
-# Package the application
-package: clean-python poetry-install
-	sam build --skip-pull-image
-	sam package --region $(AWS_REGION) --s3-bucket $(S3_BUCKET)
+# Build the Docker image
+build: clean-python poetry-install
+	docker build -t $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest .
 
-# Deploy using SAM
-deploy: package
-	sam deploy --stack-name $(STACK_NAME) --region $(AWS_REGION) --capabilities CAPABILITY_IAM
+# Deploy the Docker image
+deploy: build
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
+	docker push $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com/$(STACK_NAME):latest
 
 # Clean up local resources
 clean: clean-python
