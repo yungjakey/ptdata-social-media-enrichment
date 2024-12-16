@@ -32,7 +32,7 @@ setup:
 	      "Action": "sts:AssumeRoleWithWebIdentity",
 	      "Condition": {
 	        "StringEquals": {
-	          "token.actions.githubusercontent.com:sub": "repo:<YOUR_GITHUB_USERNAME>/<YOUR_REPOSITORY>:ref:refs/heads/main"
+	          "token.actions.githubusercontent.com:sub": "repo:$(shell git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')/$(shell basename -s .git `git config --get remote.origin.url`):ref:refs/heads/main"
 	        }
 	      }
 	    }
