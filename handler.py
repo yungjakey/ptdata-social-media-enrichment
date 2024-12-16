@@ -58,16 +58,21 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # build args
         kwargs = {}
 
-        # Get model type from path
-        path = event.get("path", "")
-        if (model_type := path.strip("/")) is not None:
-            try:
-                kwargs["config"] = load_config(model_type)
-            except FileNotFoundError:
-                logger.error(f"Config file not found for model type: {model_type}")
-                raise
+        # Determine if the event is a scheduled event
+        if "source" in event and event["source"] == "aws.events":
+            model_type = "user_model"
+            kwargs["config"] = load_config(model_type)
         else:
-            raise ValueError("Model type not specified in path")
+            # Get model type from path
+            path = event.get("path", "")
+            if (model_type := path.strip("/")) is not None:
+                try:
+                    kwargs["config"] = load_config(model_type)
+                except FileNotFoundError:
+                    logger.error(f"Config file not found for model type: {model_type}")
+                    raise
+            else:
+                raise ValueError("Model type not specified in path")
 
         # Get query parameters from query string
         querystring = event.get("queryStringParameters", {})

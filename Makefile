@@ -14,7 +14,7 @@ help:
 	@echo "  deploy          - Deploy the Docker image"
 	@echo "  clean           - Clean up local resources"
 	@echo "  all             - Full deployment process"
-.PHONY: help deploy clean poetry-install clean-python build
+.PHONY: help deploy clean poetry-install clean-python build deploy-lambda
 
 # Install dependencies and create poetry.lock
 poetry-install:
@@ -41,5 +41,8 @@ clean: clean-python
 	rm -rf .aws-sam/
 	rm -f requirements.txt
 
-# Full deployment process
+# Deploy AWS Lambda function
+deploy-lambda:
+	aws cloudformation package --template-file template.yaml --s3-bucket $(S3_BUCKET) --output-template-file packaged.yaml
+	aws cloudformation deploy --template-file packaged.yaml --stack-name $(STACK_NAME) --capabilities CAPABILITY_IAM
 all: deploy
