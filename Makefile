@@ -21,23 +21,12 @@ help:
 setup:
 	aws ecr create-repository --repository-name $(STACK_NAME) || true
 	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
-	echo '{
-	  "Version": "2012-10-17",
-	  "Statement": [
-	    {
-	      "Effect": "Allow",
-	      "Principal": {
-	        "Federated": "arn:aws:iam::$(AWS_ACCOUNT):oidc-provider/token.actions.githubusercontent.com"
-	      },
-	      "Action": "sts:AssumeRoleWithWebIdentity",
-	      "Condition": {
-	        "StringEquals": {
-	          "token.actions.githubusercontent.com:sub": "repo:$(shell git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')/$(shell basename -s .git `git config --get remote.origin.url`):ref:refs/heads/main"
-	        }
-	      }
-	    }
-	  ]
-	}' > trust-policy.json
+	GITHUB_USERNAME=$(shell git config --get remote.origin.url | sed -n 's#.*/\([^/]*\)/.*#\1#p')
+	GITHUB_REPOSITORY=$(shell basename -s .git `git config --get remote.origin.url`)
+	sed -e "s/{{AWS_ACCOUNT}}/$(AWS_ACCOUNT)/" \
+	    -e "s/{{GITHUB_USERNAME}}/$(GITHUB_USERNAME)/" \
+	    -e "s/{{GITHUB_REPOSITORY}}/$(GITHUB_REPOSITORY)/" \
+	    policy.template > trust-policy.json
 	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
 	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
 	rm trust-policy.json
