@@ -14,7 +14,13 @@ help:
 	@echo "  deploy          - Deploy the Docker image"
 	@echo "  clean           - Clean up local resources"
 	@echo "  all             - Full deployment process"
-.PHONY: help deploy clean poetry-install clean-python build deploy-lambda
+	@echo "  setup           - Create ECR repository and S3 bucket"
+.PHONY: help deploy clean poetry-install clean-python build deploy-lambda setup
+
+# Create ECR repository and S3 bucket
+setup:
+	aws ecr create-repository --repository-name $(STACK_NAME) || true
+	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
 
 # Install dependencies and create poetry.lock
 poetry-install:
