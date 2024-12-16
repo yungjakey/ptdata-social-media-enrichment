@@ -2,11 +2,21 @@ name: Continuous Integration
 
 on:
   push:
-    branches-ignore:
-      - 'events/**'
+    branches:
+      - main
+    paths:
+      - '*.py'
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'Dockerfile'
   pull_request:
-    branches-ignore:
-      - 'events/**'
+    branches:
+      - main
+    paths:
+      - '*.py'
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'Dockerfile'
 
 jobs:
   test:
