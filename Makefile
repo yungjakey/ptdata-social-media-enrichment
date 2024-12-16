@@ -40,6 +40,7 @@ deploy: build
 clean: clean-python
 	rm -rf .aws-sam/
 	rm -f requirements.txt
+	rm -f packaged.yaml
 
 # Deploy AWS Lambda function
 deploy-lambda:
