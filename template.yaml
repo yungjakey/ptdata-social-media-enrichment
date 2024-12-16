@@ -1,113 +1,98 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: AWS Lambda deployment with scheduled and HTTP triggers
+Transform: AWS::Serverless-2016-10-31
+
+Description: Social Media Analytics Enrichment Lambda Functions
 
 Parameters:
-  S3Bucket:
-    Description: "S3 bucket to store Lambda code"
+  Environment:
     Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment name
+
+  OpenAISecretName:
+    Type: String
+    Default: ptdata/openai
+    Description: Name of the secret containing OpenAI credentials
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 1024
+    Runtime: python3.11
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        OPENAI_SECRET_NAME: !Ref OpenAISecretName
+        PYTHONPATH: /var/task:/var/task/src
+
 Resources:
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
+  UserNeedsFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: LambdaExecutionPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: arn:aws:logs:*:*:*
-              - Effect: Allow
-                Action:
-                  - s3:ListBucket
-                  - s3:GetObject
-                  - s3:PutObject
-                Resource: arn:aws:s3:::*
-              - Effect: Allow
-                Action:
-                  - glue:GetTable
-                  - glue:GetTables
-                  - glue:CreateTable
-                  - glue:UpdateTable
-                Resource: arn:aws:glue:*:*:*
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: arn:aws:secretsmanager:*:*:secret:*
-
-  LambdaFunction:
-    Type: AWS::Lambda::Function
-    Properties:
+      FunctionName: !Sub "${AWS::StackName}-user-needs"
+      CodeUri: .
       Handler: handler.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        S3Bucket: !Ref S3Bucket
-        S3Key: lambda.zip
-      Runtime: python3.11
-      Environment:
-        Variables:
-          MY_AWS_REGION: !Ref AWS::Region
+      PackageType: Zip
+      AutoPublishAlias: live
+      Events:
+        Schedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(30 minutes)
+            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "10000"}}'
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 1500
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
+            - Effect: Allow
+              Action:
+                - glue:*
+                - s3:*
+              Resource: "*"
 
-  ApiGateway:
-    Type: AWS::ApiGateway::RestApi
+  ModelInferenceFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      Name: LambdaApi
+      FunctionName: !Sub "${AWS::StackName}-model-inference"
+      CodeUri: .
+      Handler: handler.lambda_handler
+      PackageType: Zip
+      AutoPublishAlias: live
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /{model}
+            Method: GET
+            RestApiId: !Ref ApiGatewayApi
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
+            - Effect: Allow
+              Action:
+                - glue:*
+                - s3:*
+              Resource: "*"
 
-  ApiGatewayResource:
-    Type: AWS::ApiGateway::Resource
+  ApiGatewayApi:
+    Type: AWS::Serverless::Api
     Properties:
-      ParentId: !GetAtt ApiGateway.RootResourceId
-      PathPart: "{proxy+}"
-      RestApiId: !Ref ApiGateway
-
-  ApiGatewayMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      AuthorizationType: NONE
-      HttpMethod: ANY
-      ResourceId: !Ref ApiGatewayResource
-      RestApiId: !Ref ApiGateway
-      Integration:
-        IntegrationHttpMethod: POST
-        Type: AWS_PROXY
-        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations"
-
-  LambdaPermissionApiGateway:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref LambdaFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
-
-  EventBridgeRule:
-    Type: AWS::Events::Rule
-    Properties:
-      ScheduleExpression: rate(30 minutes)
-      State: ENABLED
-      Targets:
-        - Arn: !GetAtt LambdaFunction.Arn
-          Id: "LambdaFunctionTarget"
-
-  LambdaPermissionEventBridge:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref LambdaFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt EventBridgeRule.Arn
-
-Outputs:
-  ApiUrl:
-    Description: "API Gateway URL"
-    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/"
+      StageName: Prod
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'GET,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
