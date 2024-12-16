@@ -4,8 +4,17 @@ AWS_ACCOUNT = 471112963254
 STACK_NAME = ptdata-social-media-enrichment
 S3_BUCKET = ptdata-lambda-artifacts
 
-# Build and deploy commands
-.PHONY: deploy clean poetry-install clean-python build
+# Display help for each target
+help:
+	@echo "Available targets:"
+	@echo "  help            - Display this help message"
+	@echo "  poetry-install  - Install dependencies and create poetry.lock"
+	@echo "  clean-python    - Clean Python cache files"
+	@echo "  build           - Build the Docker image"
+	@echo "  deploy          - Deploy the Docker image"
+	@echo "  clean           - Clean up local resources"
+	@echo "  all             - Full deployment process"
+.PHONY: help deploy clean poetry-install clean-python build
 
 # Install dependencies and create poetry.lock
 poetry-install:
