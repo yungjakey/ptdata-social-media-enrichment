@@ -164,10 +164,11 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-.aws-sam
+.ruff_cache
 **/.DS_Store
 *.code-workspace
 logs/
 **/*.code-workspace
 **/.env*
+.cascadeignore
 .aider*
