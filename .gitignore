@@ -170,3 +170,4 @@ cython_debug/
 logs/
 **/*.code-workspace
 **/.env*
+.aider*

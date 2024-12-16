@@ -19,7 +19,11 @@ def signal_handler(sig, frame):
     exit(0)
 
 
-async def main(config: dict[str, type], max_records: int = 100, drop: bool = False) -> int:
+async def main(
+    config: dict[str, type],
+    max_records: int = 100,
+    drop: bool = False,
+) -> int:
     """Run the main process."""
     logger.info("Starting process")
 

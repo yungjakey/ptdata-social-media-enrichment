@@ -1,0 +1,6 @@
+*
+!src/
+!config/
+!main.py
+!handler.py
+!pyproject.toml

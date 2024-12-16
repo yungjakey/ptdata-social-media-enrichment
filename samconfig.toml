@@ -1,9 +1,10 @@
 version = 0.1
 [default.deploy.parameters]
-stack_name = "social-media-ai-enrichment"
-resolve_s3 = true
-s3_prefix = "social-media-ai-enrichment"
+stack_name = "ptdata-social-media-enrichment"
 region = "eu-central-1"
+confirm_changeset = false
 capabilities = "CAPABILITY_IAM"
-parameter_overrides = "Environment=\"dev\" OpenAISecretName=\"ptdata/openai\" LogRetentionDays=\"14\""
+parameter_overrides = "Environment=\"dev\" OpenAISecretName=\"ptdata/openai\""
+resolve_s3 = true
+s3_prefix = "ptdata-social-media-enrichment"
 image_repositories = []
