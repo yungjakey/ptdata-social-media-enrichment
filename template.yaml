@@ -5,6 +5,7 @@ Parameters:
   S3Bucket:
     Description: "S3 bucket to store Lambda code"
     Type: String
+Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
