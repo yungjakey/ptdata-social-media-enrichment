@@ -18,5 +18,6 @@ connector:
 inference:
   workers: 20
   response_format: user_needs
+  max_tokens: 16384
   include_fields:
     - post_message

@@ -1,29 +1,133 @@
-from enum import Enum
 from typing import Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from .base import BaseInferenceModel
 
 
-class Needs(str, Enum):
-    wissen = Literal["keep me engaged", "update me"]
-    verstehen = Literal["educate me", "give me perspective"]
-    fühlen = Literal["connect me", "help me"]
-    machen = Literal["inspire me", "divert me"]
+class WissenNeed(BaseModel):
+    type: Literal[
+        "keep me engaged",
+        "update me",
+    ] = Field(
+        ...,
+        description="Specific need",
+    )
+    score: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Relevance of specific need",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Confidence in analysis",
+    )
+
+
+class VerstehenNeed(BaseModel):
+    type: Literal[
+        "educate me",
+        "give me perspective",
+    ] = Field(
+        ...,
+        description="Specific need",
+    )
+    score: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Relevance of specific need",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Confidence in analysis",
+    )
+
+
+class FuehlenNeed(BaseModel):
+    type: Literal[
+        "connect me",
+        "help me",
+    ] = Field(
+        ...,
+        description="Specific need",
+    )
+    score: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Relevance of specific need",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Confidence in analysis",
+    )
+
+
+class MachenNeed(BaseModel):
+    type: Literal[
+        "inspire me",
+        "divert me",
+    ] = Field(
+        ...,
+        description="Specific need",
+    )
+    score: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Relevance of specific need",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0,
+        le=1,
+        description="Confidence in analysis",
+    )
 
 
 class UserNeeds(BaseInferenceModel):
-    need: Needs
-    score: float = Field(ge=0, le=1)
-    confidence: float = Field(ge=0, le=1)
+    wissen: WissenNeed = Field(
+        ...,
+        description="Wissens categories",
+    )
+    verstehen: VerstehenNeed = Field(
+        ...,
+        description="Verstehen categories",
+    )
+    fuehlen: FuehlenNeed = Field(
+        ...,
+        description="Fuehlen categories",
+    )
+    machen: MachenNeed = Field(
+        ...,
+        description="Machen categories",
+    )
+    summary: str = Field(
+        ...,
+        description="Summary of analysis",
+    )
 
     @staticmethod
     def get_prompt():
         return (
             "You are a social media expert tasked with analyzing social media posts by viewing details and metrics. "
             "Analyze which needs the following social media post addresses and provide a needs analysis result. "
-            "The needs analysis result should include the needs, needs score, and confidence. "
-            "The needs score ranges from 0 to 1, where 0 indicates no needs, and 1 indicates very high needs. "
-            "The confidence ranges from 0 to 1, where 0 indicates no confidence, and 1 indicates very high confidence."
+            "For each need category (wissen, verstehen, fuehlen, machen), provide: "
+            "- The specific type from the allowed options: "
+            "  * wissen: 'keep me engaged' or 'update me' "
+            "  * verstehen: 'educate me' or 'give me perspective' "
+            "  * fuehlen: 'connect me' or 'help me' "
+            "  * machen: 'inspire me' or 'divert me' "
+            "- A score (0-1) indicating how strongly this need is addressed "
+            "- A summary explaining how this need is addressed "
+            "- A confidence score (0-1) for the total assessment "
+            "Finally, provide an overall confidence score (0-1) and a summaryfor the entire analysis."
         )

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class BaseInferenceModel(BaseModel, ABC):
-    @abstractmethod
     @staticmethod
+    @abstractmethod
     def get_prompt() -> str:
         pass

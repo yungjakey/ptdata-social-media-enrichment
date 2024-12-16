@@ -13,7 +13,6 @@ from openai.types.chat import ChatCompletion
 
 from src.common.component import ComponentFactory
 from src.common.utils import ArrowConverter, CustomEncoder
-from src.inference.models.base import BaseInferenceModel
 
 from .config import InferenceConfig
 
@@ -29,10 +28,7 @@ class InferenceClient(ComponentFactory[InferenceConfig]):
         """Initialize client."""
         super().__init__(config)
 
-        if not config.api_key or not config.api_base:
-            raise ValueError("OPENAI_API_KEY and OPENAI_API_BASE must be set")
-
-        self.model: type[BaseInferenceModel] = self.config.response_format
+        self.model = self.config.response_format
         self._client: AsyncAzureOpenAI | None = None
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.config.workers)
         self._tasks: set[asyncio.Task] = set()  # Track active tasks

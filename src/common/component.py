@@ -17,7 +17,7 @@ class ComponentFactory(Generic[TConf]):
         self._instance_config = config
 
     @classmethod
-    def from_config(cls, config: dict[str, type]) -> ComponentFactory[TConf]:
+    def from_config(cls, config: dict[str, type]) -> ComponentFactory:
         """Create a component from a configuration dictionary."""
         return cls(cls._config_type(**config))
 

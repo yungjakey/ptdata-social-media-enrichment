@@ -23,3 +23,4 @@ inference:
   workers: 20
   response_format: sentiment
   include_fields:
+    - post_message

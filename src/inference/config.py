@@ -5,48 +5,14 @@ from __future__ import annotations
 import importlib
 import os
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from inference.models.base import BaseInferenceModel
 from src.common.config import BaseConfig
+from src.inference.models.base import BaseInferenceModel
 
 
 class InferenceConfig(BaseConfig):
     """Inference configuration."""
-
-    # creds
-    api_key: str = Field(
-        default=...,
-        description="API key",
-    )
-    api_base: str = Field(
-        default=...,
-        description="API base URL",
-    )
-
-    @field_validator("api_key", mode="before")
-    @classmethod
-    def check_api_key(cls, v: str) -> str:
-        e = None
-        if not v:
-            e = os.getenv("OPENAI_API_KEY")
-            if not v:
-                raise ValueError("OPENAI_API_KEY must be set in env")
-        if not e:
-            raise ValueError("OPENAI_API_KEY must be set")
-        return e
-
-    @field_validator("api_base", mode="before")
-    @classmethod
-    def check_api_base(cls, v: str) -> str:
-        e = None
-        if not v:
-            e = os.getenv("OPENAI_API_BASE")
-            if not v:
-                raise ValueError("OPENAI_API_BASE must be set in env")
-        if not e:
-            raise ValueError("OPENAI_API_BASE must be set")
-        return e
 
     # basic
     provider: str = Field(
@@ -66,12 +32,36 @@ class InferenceConfig(BaseConfig):
         description="API engine",
     )
 
-    # orchestration
+    # creds
+    api_key: str = Field(
+        default=...,
+        description="API key",
+    )
+    api_base: str = Field(
+        default=...,
+        description="API base URL",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_credentials(cls, values: dict) -> dict:
+        api_key = values.get("api_key") or os.getenv("OPENAI_API_KEY")
+        api_base = values.get("api_base") or os.getenv("OPENAI_API_BASE")
+
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY must be set")
+        if not api_base:
+            raise ValueError("OPENAI_API_BASE must be set")
+
+        values["api_key"] = api_key
+        values["api_base"] = api_base
+        return values
+
     workers: int = Field(
-        description="Number of concurrent workers",
+        default=1,
+        description="Number of workers",
         ge=1,
         le=50,
-        default=1,
     )
 
     # data integration
@@ -105,7 +95,7 @@ class InferenceConfig(BaseConfig):
         default=None,
         description="Maximum number of tokens to generate",
         ge=0,
-        le=4096,
+        le=16384,
     )
     timeout: int | None = Field(
         default=None,
