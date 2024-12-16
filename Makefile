@@ -21,6 +21,8 @@ help:
 setup:
 	aws ecr create-repository --repository-name $(STACK_NAME) || true
 	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
+	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
+	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
 
 
 # Clean up local resources
