@@ -35,6 +35,8 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-user-needs"
       CodeUri: .
       Handler: handler.lambda_handler
+      PackageType: Zip
+      AutoPublishAlias: live
       Events:
         Schedule:
           Type: ScheduleV2
@@ -63,6 +65,8 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-model-inference"
       CodeUri: .
       Handler: handler.lambda_handler
+      PackageType: Zip
+      AutoPublishAlias: live
       Events:
         Api:
           Type: Api
