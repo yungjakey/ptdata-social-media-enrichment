@@ -2,21 +2,11 @@ name: Continuous Integration
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'config/**'
-      - '*.py'
-      - 'template.yaml'
+    branches-ignore:
+      - 'events/**'
   pull_request:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'config/**'
-      - '*.py'
-      - 'template.yaml'
+    branches-ignore:
+      - 'events/**'
 
 jobs:
   test:
