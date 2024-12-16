@@ -5,15 +5,8 @@ WORKDIR /var/task
 # copy everything except .dockerignore content
 COPY . .
 
-# install poetry and dependencies
-RUN pip install --upgrade pip && \
-    pip install poetry && \
-    pip install poetry-plugin-export
-
-
-# generate requirements.txt
-RUN poetry config virtualenvs.create false && \
-    poetry export --without-hashes --only main -f requirements.txt -o requirements.txt
+# Install dependencies using Makefile
+RUN make poetry-install
 
 # build lambda layer
 FROM public.ecr.aws/lambda/python:3.11 AS runner
