@@ -5,7 +5,7 @@ import os
 import time
 from typing import Any
 
-import boto3
+import aioboto3
 import yaml
 from botocore.exceptions import ClientError
 from pydantic import ValidationError
@@ -27,11 +27,11 @@ def load_config(model_type: str) -> dict:
     return config
 
 
-def get_secret():
+async def get_secret():
     secret_name = os.environ["OPENAI_SECRET_NAME"]
     region_name = os.environ.get("AWS_REGION", "eu-central-1")
 
-    session = boto3.session.Session()
+    session = aioboto3.Session()
     client = session.client(service_name="secretsmanager", region_name=region_name)
 
     try:
@@ -52,7 +52,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """AWS Lambda handler for all model types."""
     try:
         # Get OpenAI credentials from Secrets Manager
-        secrets = get_secret()
+        secrets = asyncio.run(get_secret())
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
         os.environ["OPENAI_API_BASE"] = secrets["OPENAI_API_BASE"]
 

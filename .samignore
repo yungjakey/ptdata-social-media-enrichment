@@ -1,0 +1,54 @@
+# Git
+.git/
+.github/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.ruff_cache/
+.mypy_cache/
+.ropeproject/
+
+# Development
+tests/
+.venv/
+.env
+poetry.lock
+pyproject.toml
+
+# Build
+.aws-sam/
+
+# SAM
+.git
+.github
+.gitignore
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.pyc
+tests/
+_tests/
+samples/
+scripts/
+*.dist-info/
+*.egg-info/
+.DS_Store
+poetry.lock
+pyproject.toml
+pytest.ini
+README.md
+NOTICE
+*.code-workspace

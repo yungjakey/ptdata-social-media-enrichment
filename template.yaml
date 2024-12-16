@@ -37,54 +37,73 @@ Globals:
       Service: social-media-enrichment
 
 Resources:
-  # UserNeedsFunction:
-  #   Type: AWS::Serverless::Function
-  #   Properties:
-  #     CodeUri: .
-  #     Handler: handler.lambda_handler
-  #     Description: Processes social media data for user needs analysis
-  #     Events:
-  #       Schedule:
-  #         Type: Schedule
-  #         Properties:
-  #           Schedule: rate(30 minutes)
-  #           Input:
-  #             path: /user_needs
-  #             queryStringParameters:
-  #               max_records: "10000"
-  #     Policies:
-  #       - Version: "2012-10-17"
-  #         Statement:
-  #           - Effect: Allow
-  #             Action:
-  #               - secretsmanager:GetSecretValue
-  #               - glue:*
-  #               - s3:*
-  #             Resource: "*"
+  # API Gateway HTTP API with IAM auth
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        DefaultAuthorizer: IAMAuthorizer
+        Authorizers:
+          IAMAuthorizer:
+            EnableIamAuthorizer: true
 
-  ModelInferenceFunction:
+  UserNeedsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: ./
       Handler: handler.lambda_handler
-      Description: Generic function for all model types via HTTP API
       Events:
-        HttpApi:
-          Type: HttpApi
+        Schedule:
+          Type: Schedule
           Properties:
-            Path: /{model}
-            Method: GET
+            Schedule: rate(30 minutes)
+            Input:
+              Fn::Sub: |
+                {
+                  "path": "/user_needs",
+                  "queryStringParameters": {
+                    "max_records": "10000"
+                  }
+                }
       Policies:
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
+            - Effect: Allow
+              Action:
+                - glue:*
+                - s3:*
+              Resource: "*"
+
+  ModelInferenceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: handler.lambda_handler
+      Events:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            Path: /{model}
+            Method: GET
+            ApiId: !Ref HttpApi
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
+            - Effect: Allow
+              Action:
                 - glue:*
                 - s3:*
               Resource: "*"
 
 Outputs:
-  ModelInferenceApi:
+  ApiEndpoint:
     Description: "API Gateway endpoint URL"
-    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"

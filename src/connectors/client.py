@@ -196,7 +196,11 @@ class AWSConnector(ComponentFactory[AWSConnectorConfig]):
         df = df.replace_schema_metadata(metadata)
 
         # get random selection of records
-        indices = random.sample(range(df.num_rows), k=max_records)
+        indices = random.sample(range(df.num_rows), k=min(max_records, len(df)))
+        if len(indices) == 0:
+            logger.warning("No valid records found")
+            return pa.Table.from_pylist([])
+
         return df.take(indices)
 
     async def write(
