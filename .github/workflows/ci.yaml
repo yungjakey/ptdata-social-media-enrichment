@@ -14,7 +14,7 @@ on:
       - 'Dockerfile'
 
 jobs:
-  test:
+  build-test-push:
     runs-on: ubuntu-latest
 
     steps:
@@ -29,28 +29,22 @@ jobs:
     - name: Install dependencies
       run: |
         pip install poetry
+        poetry self add poetry-plugin-export
         poetry install
 
     - name: Run tests
       run: |
         poetry run pytest
-
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        role-to-assume: arn:aws:iam::471112963254:role/GitHubActionsRole
-        aws-region: eu-central-1
-        audience: sts.amazonaws.com
-
-    - name: Log in to Amazon ECR
+        
+    - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
-
-    - name: Build, tag, and push Docker image
+  
+    - name: Build, tag, and push image to Amazon ECR
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ptdata-social-media-enrichment
+        ECR_REPOSITORY: opencms
         IMAGE_TAG: latest
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG

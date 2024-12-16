@@ -13,24 +13,22 @@ on:
       - 'config/**'
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install AWS CLI
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install
-
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::471112963254:role/GitHubActionsRole
           aws-region: eu-central-1
-
+          role-session-name: main
+          
       - name: Deploy to AWS
         run: |
           aws cloudformation package --template-file template.yaml --s3-bucket ptdata-lambda-artifacts --output-template-file packaged.yaml

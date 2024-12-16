@@ -7,7 +7,7 @@ Parameters:
     Type: String
   OIDCProviderArn:
     Description: Arn for the GitHub OIDC Provider.
-    Default: ""
+    Default: GitHubActionsRole
     Type: String
   OIDCAudience:
     Description: Audience supplied to configure-aws-credentials.

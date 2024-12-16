@@ -18,16 +18,7 @@ logging.basicConfig(
 )
 
 
-def load_config(model_type: str) -> dict:
-    """Load config from yaml file."""
-    config_path = os.path.join(os.path.dirname(__file__), "config", f"{model_type}.yaml")
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-
-    return config
-
-
-async def get_secret():
+async def get_secret() -> dict[str, str]:
     secret_name = os.environ["OPENAI_SECRET_NAME"]
     region_name = os.environ.get("AWS_REGION", "eu-central-1")
 
@@ -47,7 +38,43 @@ async def get_secret():
                 raise ValueError("Secret value must be a string")
 
 
-def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+def load_config(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, str]]:
+    """Parse input from API Gateway."""
+    # Parse input
+    path = event.get("path", "")
+    if (model_type := path.strip("/")) is None:
+        raise ValueError("Model type not specified in path")
+
+    # Get model type from path
+    config_path = os.path.join(os.path.dirname(__file__), "config", f"{model_type}.yaml")
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.error(f"Config file not found for model type: {model_type}")
+        raise
+
+    # Get query parameters from query string
+    kwargs = {}
+    query_params = event.get("queryStringParameters", {})
+
+    if (max_records := query_params.get("max_records")) is not None:
+        try:
+            kwargs["max_records"] = int(max_records)
+        except Exception as e:
+            logger.error(f"Invalid max_records parameter, using default: {e}")
+
+    if (drop := query_params.get("drop")) is not None:
+        try:
+            if drop.lower() == "true":
+                kwargs["drop"] = True
+        except Exception as e:
+            logger.error(f"Invalid drop parameter, using default: {e}")
+
+    return model_type, config, kwargs
+
+
+def lambda_handler(event: dict[str, Any]) -> dict[str, Any]:
     """AWS Lambda handler for all model types."""
     try:
         # Get OpenAI credentials from Secrets Manager
@@ -55,44 +82,14 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         os.environ["OPENAI_API_KEY"] = secrets["OPENAI_API_KEY"]
         os.environ["OPENAI_API_BASE"] = secrets["OPENAI_API_BASE"]
 
-        # build args
-        kwargs = {}
-
-        # Determine if the event is a scheduled event
-        if "source" in event and event["source"] == "aws.events":
-            model_type = "user_model"
-            kwargs["config"] = load_config(model_type)
-        else:
-            # Get model type from path
-            path = event.get("path", "")
-            if (model_type := path.strip("/")) is not None:
-                try:
-                    kwargs["config"] = load_config(model_type)
-                except FileNotFoundError:
-                    logger.error(f"Config file not found for model type: {model_type}")
-                    raise
-            else:
-                raise ValueError("Model type not specified in path")
-
-        # Get query parameters from query string
-        querystring = event.get("queryStringParameters", {})
-        if (max_records := querystring.get("max_records")) is not None:
-            try:
-                kwargs["max_records"] = int(max_records)
-            except Exception as e:
-                logger.error(f"Invalid max_records parameter, using default: {e}")
-
-        if (drop := querystring.get("drop")) is not None:
-            try:
-                if drop.lower() == "true":
-                    kwargs["drop"] = True
-            except Exception as e:
-                logger.error(f"Invalid drop parameter, using default: {e}")
+        # Parse input
+        model_type, config, kwargs = load_config(event)
 
         # Load config and run main
         start = time.time()
-        n = asyncio.run(main(**kwargs))
+        n = asyncio.run(main(config, **kwargs))
         end = time.time()
+
         return {
             "statusCode": 200,
             "body": json.dumps(

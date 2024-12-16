@@ -52,8 +52,6 @@ This module handles Azure OpenAI integration for batch processing social media c
 ```yaml
 inference:
   # Azure OpenAI settings
-  api_key: ${OPENAI_API_KEY}
-  api_base: ${OPENAI_API_BASE}
   version: "2024-08-01-preview"
   deployment: "gpt-4"
   engine: "gpt-4"

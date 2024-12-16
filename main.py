@@ -13,7 +13,7 @@ from src.inference import InferenceClient
 logger = logging.getLogger(__name__)
 
 
-def signal_handler(sig, frame):
+def signal_handler(_1, _2):
     """Handle termination signals."""
     logger.info("Signal received, exiting gracefully...")
     exit(0)
@@ -21,7 +21,7 @@ def signal_handler(sig, frame):
 
 async def main(
     config: dict[str, type],
-    max_records: int = 100,
+    max_records: int = 1000,
     drop: bool = False,
 ) -> int:
     """Run the main process."""
