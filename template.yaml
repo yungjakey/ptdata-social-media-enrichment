@@ -23,6 +23,23 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: arn:aws:s3:::*
+              - Effect: Allow
+                Action:
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                Resource: arn:aws:glue:*:*:*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: arn:aws:secretsmanager:*:*:secret:*
 
   LambdaFunction:
     Type: AWS::Lambda::Function
@@ -76,6 +93,7 @@ Resources:
     Type: AWS::Events::Rule
     Properties:
       ScheduleExpression: rate(30 minutes)
+      State: ENABLED
       Targets:
         - Arn: !GetAtt LambdaFunction.Arn
           Id: "LambdaFunctionTarget"
