@@ -32,20 +32,19 @@ async def get_secret():
     region_name = os.environ.get("AWS_REGION", "eu-central-1")
 
     session = aioboto3.Session()
-    client = session.client(service_name="secretsmanager", region_name=region_name)
-
-    try:
-        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
-    except ClientError as e:
-        logger.error(f"Failed to retrieve secret: {e}")
-        raise e
-    else:
-        if "SecretString" in get_secret_value_response:
-            secret = json.loads(get_secret_value_response["SecretString"])
-            return secret
+    async with session.client(service_name="secretsmanager", region_name=region_name) as client:
+        try:
+            get_secret_value_response = await client.get_secret_value(SecretId=secret_name)
+        except ClientError as e:
+            logger.error(f"Failed to retrieve secret: {e}")
+            raise e
         else:
-            logger.error("Secret value is not a string")
-            raise ValueError("Secret value must be a string")
+            if "SecretString" in get_secret_value_response:
+                secret = json.loads(get_secret_value_response["SecretString"])
+                return secret
+            else:
+                logger.error("Secret value is not a string")
+                raise ValueError("Secret value must be a string")
 
 
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:

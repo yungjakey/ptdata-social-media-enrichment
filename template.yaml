@@ -69,15 +69,7 @@ Resources:
           Properties:
             Path: /{model}
             Method: GET
-            RequestParameters:
-              - method.request.querystring.max_records: true
-            IntegrationSettings:
-              TimeoutInMillis: 29000 # 29 seconds
-              ConnectionType: INTERNET
-              Async: false
-              IntegrationRetryPolicies:
-                - MaximumRetryAttempts: 2
-                  PerRetryTimeoutInMillis: 15000
+            RestApiId: !Ref ApiGatewayApi
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -90,3 +82,13 @@ Resources:
                 - glue:*
                 - s3:*
               Resource: "*"
+
+  ApiGatewayApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      EndpointConfiguration: REGIONAL
+      Cors:
+        AllowMethods: "'GET,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
