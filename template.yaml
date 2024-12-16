@@ -1,7 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: AWS Lambda deployment with scheduled and HTTP triggers
 
-Resources:
+Parameters:
+  S3Bucket:
+    Description: "S3 bucket to store Lambda code"
+    Type: String
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
