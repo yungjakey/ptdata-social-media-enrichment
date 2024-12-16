@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import boto3
@@ -85,10 +86,16 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 logger.error(f"Invalid drop parameter, using default: {e}")
 
         # Load config and run main
+        start = time.time()
         n = asyncio.run(main(**kwargs))
+        end = time.time()
         return {
             "statusCode": 200,
-            "body": json.dumps({"message": f"Successfully applied {model_type} to {n} records"}),
+            "body": json.dumps(
+                {
+                    "message": f"Successfully applied {model_type} to {n} records in {end - start:.2f} seconds"
+                }
+            ),
         }
     except ValidationError as e:
         logger.error(f"Config validation error: {e}")

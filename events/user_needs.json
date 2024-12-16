@@ -1,0 +1,9 @@
+{
+    "version": "2.0",
+    "routeKey": "GET /user_needs",
+    "path": "/user_needs",
+    "queryStringParameters": {
+        "max_records": "100",
+        "drop": "false"
+    }
+}
