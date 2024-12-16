@@ -19,7 +19,7 @@ help:
 # Install dependencies and create poetry.lock
 poetry-install:
 	poetry install --only main
-	poetry export --without-hashes --f requirements.txt -o requirements.txt
+	poetry export --without-hashes -f requirements.txt -o requirements.txt
 
 # Clean Python cache files
 clean-python:
