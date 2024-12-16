@@ -21,8 +21,26 @@ help:
 setup:
 	aws ecr create-repository --repository-name $(STACK_NAME) || true
 	aws s3api create-bucket --bucket $(S3_BUCKET) --region $(AWS_REGION) --create-bucket-configuration LocationConstraint=$(AWS_REGION) || true
+	echo '{
+	  "Version": "2012-10-17",
+	  "Statement": [
+	    {
+	      "Effect": "Allow",
+	      "Principal": {
+	        "Federated": "arn:aws:iam::$(AWS_ACCOUNT):oidc-provider/token.actions.githubusercontent.com"
+	      },
+	      "Action": "sts:AssumeRoleWithWebIdentity",
+	      "Condition": {
+	        "StringEquals": {
+	          "token.actions.githubusercontent.com:sub": "repo:<YOUR_GITHUB_USERNAME>/<YOUR_REPOSITORY>:ref:refs/heads/main"
+	        }
+	      }
+	    }
+	  ]
+	}' > trust-policy.json
 	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
 	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
+	rm trust-policy.json
 
 
 # Clean up local resources
