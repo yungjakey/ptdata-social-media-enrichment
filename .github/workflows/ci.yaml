@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - develop
-    paths:
-      - '*.py'
-      - 'src/**'
-      - 'pyproject.toml'
-      - 'Dockerfile'
   pull_request:
     branches:
       - main
