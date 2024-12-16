@@ -33,9 +33,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-user-needs"
-      CodeUri: .
-      Handler: handler.lambda_handler
-      PackageType: Zip
+      PackageType: Image
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AWS::StackName}:latest"
       AutoPublishAlias: live
       Events:
         Schedule:
@@ -63,9 +62,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "${AWS::StackName}-model-inference"
-      CodeUri: .
-      Handler: handler.lambda_handler
-      PackageType: Zip
+      PackageType: Image
+      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AWS::StackName}:latest"
       AutoPublishAlias: live
       Events:
         Api:
