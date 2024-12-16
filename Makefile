@@ -27,10 +27,15 @@ setup:
 	    -e "s/{{GITHUB_USERNAME}}/$(GITHUB_USERNAME)/" \
 	    -e "s/{{GITHUB_REPOSITORY}}/$(GITHUB_REPOSITORY)/" \
 	    policy.template > trust-policy.json
-	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json || true
+	# Delete existing role and policy if they exist
+	aws iam detach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
+	aws iam delete-role --role-name GitHubActionsRole || true
+
+	# Create new role with updated policy
+	aws iam create-role --role-name GitHubActionsRole --assume-role-policy-document file://trust-policy.json
 	ROLE_ARN=$(shell aws iam get-role --role-name GitHubActionsRole --query 'Role.Arn' --output text)
 	echo "GitHub Actions Role ARN: $$ROLE_ARN"
-	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess || true
+	aws iam attach-role-policy --role-name GitHubActionsRole --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
 	rm trust-policy.json
 
 
