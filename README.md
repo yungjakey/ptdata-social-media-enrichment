@@ -105,7 +105,33 @@ aws configure
 poetry export --without-hashes --format=requirements.txt > requirements.txt
 ```
 
-### Deployment
+### AWS CloudFormation Testing
+
+Before deploying your AWS Lambda functions, you can test your CloudFormation template using the AWS CloudFormation Linter (`cfn-lint`) and Change Sets.
+
+#### Linting with `cfn-lint`
+
+Ensure your template is free of syntax and semantic errors by using `cfn-lint`.
+
+```bash
+pip install cfn-lint
+cfn-lint template.yaml
+```
+
+#### Creating a Change Set
+
+Preview the changes that will be made by your CloudFormation stack:
+
+```bash
+aws cloudformation create-change-set --stack-name $(STACK_NAME) --template-body file://template.yaml --change-set-name TestChangeSet --capabilities CAPABILITY_IAM
+aws cloudformation describe-change-set --stack-name $(STACK_NAME) --change-set-name TestChangeSet
+```
+
+If satisfied with the changes, execute the change set:
+
+```bash
+aws cloudformation execute-change-set --stack-name $(STACK_NAME) --change-set-name TestChangeSet
+```
 
 ```bash
 # Build and deploy using Docker
