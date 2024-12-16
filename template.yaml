@@ -17,14 +17,9 @@ Parameters:
     Default: ptdata/openai
     Description: Name of the secret containing OpenAI credentials
 
-  LogRetentionDays:
-    Type: Number
-    Default: "14"
-    Description: CloudWatch Logs retention period in days
-
 Globals:
   Function:
-    Timeout: 900 # 15 minutes
+    Timeout: 900
     MemorySize: 1024
     Runtime: python3.11
     Environment:
@@ -32,39 +27,23 @@ Globals:
         ENVIRONMENT: !Ref Environment
         OPENAI_SECRET_NAME: !Ref OpenAISecretName
         PYTHONPATH: /var/task:/var/task/src
-    Tags:
-      Environment: !Ref Environment
-      Service: social-media-enrichment
 
 Resources:
-  # API Gateway HTTP API with IAM auth
-  HttpApi:
-    Type: AWS::Serverless::HttpApi
-    Properties:
-      Auth:
-        DefaultAuthorizer: IAMAuthorizer
-        Authorizers:
-          IAMAuthorizer:
-            EnableIamAuthorizer: true
-
   UserNeedsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ./
+      FunctionName: !Sub "${AWS::StackName}-user-needs"
+      CodeUri: .
       Handler: handler.lambda_handler
       Events:
         Schedule:
-          Type: Schedule
+          Type: ScheduleV2
           Properties:
-            Schedule: rate(30 minutes)
-            Input:
-              Fn::Sub: |
-                {
-                  "path": "/user_needs",
-                  "queryStringParameters": {
-                    "max_records": "10000"
-                  }
-                }
+            ScheduleExpression: rate(30 minutes)
+            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "10000"}}'
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 1500
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -81,15 +60,24 @@ Resources:
   ModelInferenceFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ./
+      FunctionName: !Sub "${AWS::StackName}-model-inference"
+      CodeUri: .
       Handler: handler.lambda_handler
       Events:
-        HttpApi:
-          Type: HttpApi
+        Api:
+          Type: Api
           Properties:
             Path: /{model}
             Method: GET
-            ApiId: !Ref HttpApi
+            RequestParameters:
+              - method.request.querystring.max_records: true
+            IntegrationSettings:
+              TimeoutInMillis: 29000 # 29 seconds
+              ConnectionType: INTERNET
+              Async: false
+              IntegrationRetryPolicies:
+                - MaximumRetryAttempts: 2
+                  PerRetryTimeoutInMillis: 15000
       Policies:
         - Version: "2012-10-17"
           Statement:
@@ -102,8 +90,3 @@ Resources:
                 - glue:*
                 - s3:*
               Resource: "*"
-
-Outputs:
-  ApiEndpoint:
-    Description: "API Gateway endpoint URL"
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"

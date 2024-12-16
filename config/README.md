@@ -12,21 +12,50 @@ config/
 └── ...
 ```
 
-#### [`handler.py`](handler.py)
-- Generic Lambda handler for all job types
-- Dynamic job loading based on URL path
-- Secrets management for OpenAI credentials
-- Error handling and response formatting
-- Triggered via either HTTP or scheduled event
+### Lambda Functions
 
+#### `UserNeedsFunction`
+- Scheduled Lambda function that runs every 30 minutes
+- Processes social media data to extract user needs and insights
+- Configured through SAM template and sentiment.yaml
 
-#### [`main.py`](main.py)
-- Generic entrypoint for all job types
-- Handles reading and processing data
-- Handles writing results to target location
+#### `ModelInferenceFunction`
+- HTTP API endpoint for on-demand model inference
+- Supports different model types through path parameters
+- IAM-authenticated via API Gateway
 
+### Configuration
 
-### Configuration (`config/sentiment.yaml`)
+#### SAM Template (`template.yaml`)
+```yaml
+Resources:
+  UserNeedsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.lambda_handler
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(30 minutes)
+            Input:
+              path: /user_needs
+              queryStringParameters:
+                max_records: 10000
+
+  ModelInferenceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.lambda_handler
+      Events:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            Path: /{model}
+            Method: GET
+```
+
+#### Job Config (`sentiment.yaml`)
 ```yaml
 connector:
   source:
@@ -57,64 +86,45 @@ inference:
   workers: 20
   response_format: sentiment
   exclude_fields:
-  - id  
-  - post_key
-  - hashtag_key
-  - date_key
-  - channel_key
-  - last_update_time  
-  - post_attachment_name  
-  - post_link
-  - image_link
+    - id  
+    - post_key
+    - hashtag_key
+    - date_key
+    - channel_key
+    - last_update_time  
+    - post_attachment_name  
+    - post_link
+    - image_link
 ```
 
-### Implementation (`main.py`)
-```python
-async def main(config: RootConfig, drop: bool = False) -> None:
-    connector = AWSConnector.from_config(config.connector)
-    
-    async with InferenceClient.from_config(config.inference) as provider:
-        # Read source data
-        records = await connector.read(drop=drop)
-        
-        # Process with OpenAI
-        results = await provider.process_batch(
-            records=records, 
-            index=connector.config.target.index_field
-        )
-        await connector.write(records=results)
-```
-
-### Lambda Integration
-
-#### URL Pattern
-```
-POST /{model_name}
-```
-
-#### Environment Variables
+### Environment Variables
 - `OPENAI_SECRET_NAME`: Name of AWS Secrets Manager secret
-
-```json
-{
-    "OPENAI_API_KEY": "sk-...",
-    "OPENAI_API_BASE": "https://..."
-}
-```
-
-## Development
-
-### Local Testing
-```bash
-# Run locally
-python main.py --model sentiment
-
-# Test with SAM
-sam local invoke -e events/sentiment.json -n events/env.json
-```
-
+- `ENVIRONMENT`: Deployment environment (dev/prod)
+- `PYTHONPATH`: Set to `/var/task` in Lambda environment
 
 ### Deployment
+
+The functions are deployed using AWS SAM:
 ```bash
-sam deploy
+# Build and deploy
+make deploy
 ```
+
+This will:
+1. Export dependencies from Poetry to requirements.txt
+2. Build the Lambda functions with the correct Python environment
+3. Deploy to AWS using CloudFormation
+
+### Local Development
+
+For local development and testing:
+```bash
+# Install dependencies
+poetry install
+
+# Run tests
+poetry run pytest
+
+# Format code
+poetry run black .
+poetry run isort .

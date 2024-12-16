@@ -74,6 +74,7 @@ graph LR
 #### Performance
 - Concurrent data loading and processing with asyncio
 - Memory-efficient PyArrow tables
+- Optimized Lambda deployment package size
 
 #### Cost
 - Iceberg metadata filtering
@@ -87,20 +88,55 @@ graph LR
 ### Prerequisites
 
 - Python 3.11+
-- Poetry for dependency management
-- AWS and SAM CLIs
+- Poetry for development dependency management
+- AWS SAM CLI
 - AWS account with appropriate permissions
 
-### Installation
+### Development Setup
 
 ```bash
-# Install dependencies
+# Install development dependencies
 poetry install
 
 # Configure AWS credentials
 aws configure
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your settings
+# Export dependencies for deployment
+poetry export --without-hashes --format=requirements.txt > requirements.txt
+```
+
+### Deployment
+
+```bash
+# Build and deploy using SAM
+make deploy
+```
+
+This will:
+1. Export dependencies to requirements.txt
+2. Build the Lambda functions using SAM
+3. Deploy to AWS using CloudFormation
+
+### Configuration
+
+The system is configured through:
+1. SAM template (`template.yaml`) - Lambda function configuration
+2. Job configs (`config/*.yaml`) - Job-specific settings
+3. Environment variables:
+   - `OPENAI_SECRET_NAME`: AWS Secrets Manager secret name
+   - `ENVIRONMENT`: Deployment environment (dev/prod)
+
+### Development
+
+For local development and testing:
+```bash
+# Install development dependencies
+poetry install
+
+# Run tests
+poetry run pytest
+
+# Format code
+poetry run black .
+poetry run isort .
 ```
