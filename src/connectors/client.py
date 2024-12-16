@@ -178,6 +178,10 @@ class AWSConnector(ComponentFactory[AWSConnectorConfig]):
                 ]
                 filtered_tables.append(table.filter(pa.array(mask)))
 
+        if not filtered_tables or len(filtered_tables) == 0:
+            logger.warning("No valid records found")
+            return pa.Table.from_pylist([])
+
         # Join filtered tables
         df = filtered_tables[0]
         for table in filtered_tables[1:]:

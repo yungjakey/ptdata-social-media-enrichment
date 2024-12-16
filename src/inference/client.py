@@ -122,10 +122,12 @@ class InferenceClient(ComponentFactory[InferenceConfig]):
         results, mask = [], [False] * len(records)  # Ensure mask length matches records length
         for i, (rec, res) in enumerate(zip(records.to_pylist(), response, strict=False)):
             if isinstance(res, BaseException):
-                logger.error(f"Error processing record: {rec}")
+                logger.error(f"Error processing record: {res}")
+                logger.debug(f"Record {rec}")
                 continue  # Leave mask[i] as False
             if not res or not all(res.keys()):
-                logger.warning(f"Empty response for record: {rec}")
+                logger.warning(f"Empty response for record: {res}")
+                logger.debug(f"Record {rec}")
                 continue
             results.append(res)
             mask[i] = True  # Mark the corresponding record as valid

@@ -15,14 +15,10 @@ class WissenNeed(BaseModel):
     )
     score: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Relevance of specific need",
     )
     confidence: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Confidence in analysis",
     )
 
@@ -37,14 +33,10 @@ class VerstehenNeed(BaseModel):
     )
     score: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Relevance of specific need",
     )
     confidence: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Confidence in analysis",
     )
 
@@ -59,14 +51,10 @@ class FuehlenNeed(BaseModel):
     )
     score: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Relevance of specific need",
     )
     confidence: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Confidence in analysis",
     )
 
@@ -81,14 +69,10 @@ class MachenNeed(BaseModel):
     )
     score: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Relevance of specific need",
     )
     confidence: float = Field(
         ...,
-        ge=0,
-        le=1,
         description="Confidence in analysis",
     )
 
@@ -121,13 +105,8 @@ class UserNeeds(BaseInferenceModel):
             "You are a social media expert tasked with analyzing social media posts by viewing details and metrics. "
             "Analyze which needs the following social media post addresses and provide a needs analysis result. "
             "For each need category (wissen, verstehen, fuehlen, machen), provide: "
-            "- The specific type from the allowed options: "
-            "  * wissen: 'keep me engaged' or 'update me' "
-            "  * verstehen: 'educate me' or 'give me perspective' "
-            "  * fuehlen: 'connect me' or 'help me' "
-            "  * machen: 'inspire me' or 'divert me' "
+            "- The specific type from the allowed options"
             "- A score (0-1) indicating how strongly this need is addressed "
-            "- A summary explaining how this need is addressed "
             "- A confidence score (0-1) for the total assessment "
             "Finally, provide an overall confidence score (0-1) and a summaryfor the entire analysis."
         )

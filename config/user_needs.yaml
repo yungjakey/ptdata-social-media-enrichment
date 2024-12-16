@@ -5,7 +5,7 @@ connector:
         table: dim_post_details
         datetime_field: last_update_time
         index_field: post_key
-    time_filter_hours: 10
+    time_filter_hours: 6
 
   target:
     database: dev_gold
@@ -18,6 +18,5 @@ connector:
 inference:
   workers: 20
   response_format: user_needs
-  max_tokens: 16384
   include_fields:
     - post_message

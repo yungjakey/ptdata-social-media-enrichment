@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Generic
+from typing import Any, Generic
 
 from src.common.config import TConf
 
@@ -17,7 +17,7 @@ class ComponentFactory(Generic[TConf]):
         self._instance_config = config
 
     @classmethod
-    def from_config(cls, config: dict[str, type]) -> ComponentFactory:
+    def from_config(cls, config: dict[str, Any]) -> ComponentFactory[TConf]:
         """Create a component from a configuration dictionary."""
         return cls(cls._config_type(**config))
 

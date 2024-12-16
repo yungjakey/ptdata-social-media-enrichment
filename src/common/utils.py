@@ -56,19 +56,36 @@ class ArrowConverter:
             return pa.date32()
         if python_type is bytes:
             return pa.binary()
+        if isinstance(python_type, type) and issubclass(python_type, BaseModel):
+            # Handle nested Pydantic models by converting them to struct type
+            return pa.struct(
+                [
+                    (name, ArrowConverter._get_arrow_type(field.annotation))
+                    for name, field in python_type.model_fields.items()
+                ]
+            )
 
         return pa.string()
 
     @classmethod
     def to_list(cls, model: type[BaseModel]) -> list[tuple[str, pa.DataType]]:
         """Convert Pydantic model to Arrow schema."""
-        return [
-            (name, cls._get_arrow_type(field.annotation))
-            for name, field in model.model_fields.items()
-        ]
+        fields = []
+        for name, field in model.model_fields.items():
+            field_type = field.annotation
+            if isinstance(field_type, type) and issubclass(field_type, BaseModel):
+                # Flatten nested models into dot notation fields
+                for nested_name, nested_field in field_type.model_fields.items():
+                    fields.append(
+                        (f"{name}.{nested_name}", cls._get_arrow_type(nested_field.annotation))
+                    )
+            else:
+                fields.append((name, cls._get_arrow_type(field_type)))
+        return fields
 
     @classmethod
     def to_arrow_schema(cls, model: type[BaseModel]) -> pa.Schema:
+        """Convert Pydantic model to Arrow schema."""
         return pa.schema(cls.to_list(model))
 
 
