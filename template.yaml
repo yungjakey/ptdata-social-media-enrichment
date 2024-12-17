@@ -19,7 +19,7 @@ Parameters:
 
 Globals:
   Function:
-    Timeout: 900
+    Timeout: 60
     MemorySize: 2048
     Environment:
       Variables:
@@ -55,4 +55,4 @@ Resources:
             RetryPolicy:
               MaximumRetryAttempts: 0
               MaximumEventAgeInSeconds: 900 # 15 minutes
-            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "5000"}}'
+            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "1000"}}'
