@@ -26,6 +26,7 @@ Globals:
         ENVIRONMENT: !Ref Environment
         OPENAI_SECRET_NAME: !Ref OpenAISecretName
         PYTHONPATH: /var/task:/var/task/src
+        AWS_LAMBDA_LOG_FLUSH: "true"
 
 Resources:
   UserNeedsFunction:
@@ -52,6 +53,6 @@ Resources:
           Properties:
             ScheduleExpression: rate(30 minutes)
             RetryPolicy:
-              MaximumRetryAttempts: 2
+              MaximumRetryAttempts: 0
               MaximumEventAgeInSeconds: 900 # 15 minutes
-            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "10000"}}'
+            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "5000"}}'
