@@ -1,0 +1,9 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "ptdata-social-media-enrichment"
+resolve_s3 = true
+s3_prefix = "ptdata-social-media-enrichment"
+region = "eu-central-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"dev\" OpenAISecretName=\"ptdata/openai\""
+image_repositories = []
