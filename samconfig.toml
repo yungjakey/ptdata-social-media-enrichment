@@ -7,3 +7,4 @@ region = "eu-central-1"
 capabilities = "CAPABILITY_IAM"
 parameter_overrides = "Environment=\"dev\" OpenAISecretName=\"ptdata/openai\""
 image_repositories = []
+resolve_image_repos = true

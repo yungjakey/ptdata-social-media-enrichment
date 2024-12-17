@@ -38,7 +38,7 @@ async def get_secret() -> dict[str, str]:
                 raise ValueError("Secret value must be a string")
 
 
-def load_config(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, str]]:
+def load_config(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
     """Parse input from API Gateway."""
     # Parse input
     path = event.get("path", "")
@@ -74,8 +74,11 @@ def load_config(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, s
     return model_type, config, kwargs
 
 
-def lambda_handler(event: dict[str, Any]) -> dict[str, Any]:
+def lambda_handler(event: dict[str, Any], context: Any | None = None) -> dict[str, Any]:
     """AWS Lambda handler for all model types."""
+    logger.debug(f"Received event {json.dumps(event, indent=2)}")
+    logger.debug(f"Received context {context}")
+
     try:
         # Get OpenAI credentials from Secrets Manager
         secrets = asyncio.run(get_secret())

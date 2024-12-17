@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 
-Description: Social Media Analytics Enrichment Lambda Functions
+Description: Social Media Analytics Enrichment Lambda Function
 
 Parameters:
   Environment:
@@ -20,7 +20,7 @@ Parameters:
 Globals:
   Function:
     Timeout: 900
-    MemorySize: 2024
+    MemorySize: 2048
     Environment:
       Variables:
         ENVIRONMENT: !Ref Environment
@@ -35,61 +35,23 @@ Resources:
       PackageType: Image
       ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AWS::StackName}:latest"
       AutoPublishAlias: live
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
+            - Effect: Allow
+              Action:
+                - glue:*
+                - s3:*
+              Resource: "*"
       Events:
-        Schedule:
+        ScheduleTrigger:
           Type: ScheduleV2
           Properties:
             ScheduleExpression: rate(30 minutes)
-            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "10000"}}'
             RetryPolicy:
               MaximumRetryAttempts: 2
-              MaximumEventAgeInSeconds: 1500
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
-            - Effect: Allow
-              Action:
-                - glue:*
-                - s3:*
-              Resource: "*"
-
-  ModelInferenceFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "${AWS::StackName}-model-inference"
-      PackageType: Image
-      ImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AWS::StackName}:latest"
-      AutoPublishAlias: live
-      Events:
-        Api:
-          Type: Api
-          Properties:
-            Path: /{model}
-            Method: GET
-            RestApiId: !Ref ApiGatewayApi
-      Policies:
-        - Version: "2012-10-17"
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${OpenAISecretName}-*"
-            - Effect: Allow
-              Action:
-                - glue:*
-                - s3:*
-              Resource: "*"
-
-  ApiGatewayApi:
-    Type: AWS::Serverless::Api
-    Properties:
-      StageName: Prod
-      EndpointConfiguration: REGIONAL
-      Cors:
-        AllowMethods: "'GET,OPTIONS'"
-        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-        AllowOrigin: "'*'"
+              MaximumEventAgeInSeconds: 900 # 15 minutes
+            Input: '{"path": "/user_needs", "queryStringParameters": {"max_records": "10000"}}'
