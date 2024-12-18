@@ -156,6 +156,10 @@ class InferenceClient(ComponentFactory[InferenceConfig]):
         """Async context manager exit, cleanup resources."""
 
         # Wait for all pending tasks to complete
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        await self.close()
+        try:
+            if self._tasks:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+        except Exception as e:
+            logger.error(f"Error waiting for tasks to complete: {e}")
+        finally:
+            await self.close()

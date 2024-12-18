@@ -71,9 +71,7 @@ class AWSConnector(ComponentFactory[AWSConnectorConfig]):
 
     async def _get_processed_records(self, catalog: Catalog) -> dict[str, datetime]:
         """Get mapping of index keys to their last processing time."""
-        if not catalog:
-            logger.error("Error getting catalog")
-            return {}
+
         try:
             table = catalog.load_table((self.config.target.database, self.config.target.table))
         except NoSuchTableError:
@@ -141,6 +139,7 @@ class AWSConnector(ComponentFactory[AWSConnectorConfig]):
 
     async def read(self, max_records: int = 100, drop: bool = False) -> pa.Table:
         """Read records from source tables."""
+
         catalog = await self.catalog
         if not catalog:
             logger.error("Error getting catalog")
@@ -231,7 +230,9 @@ class AWSConnector(ComponentFactory[AWSConnectorConfig]):
         try:
             table = catalog.load_table(table_identifier)
         except NoSuchTableError:
-            logger.debug(f"Creating schema from {records.schema} and {datetime_field.name}")
+            logger.info(
+                f"Creating schema from datetime field {datetime_field.name}: {records.schema.to_string()}"
+            )
             schema = IcebergConverter.to_iceberg_schema(records.schema, datetime_field)
 
             kwargs = {

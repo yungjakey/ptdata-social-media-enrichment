@@ -5,9 +5,14 @@ from datetime import date, datetime
 
 import pyarrow as pa
 from pydantic import BaseModel
-from pyiceberg.partitioning import PartitionField, PartitionSpec
+from pyiceberg.partitioning import (
+    DayTransform,
+    MonthTransform,
+    PartitionField,
+    PartitionSpec,
+    YearTransform,
+)
 from pyiceberg.schema import Schema
-from pyiceberg.transforms import DayTransform, MonthTransform, YearTransform
 from pyiceberg.types import (
     BinaryType,
     BooleanType,
@@ -18,6 +23,7 @@ from pyiceberg.types import (
     LongType,
     NestedField,
     StringType,
+    StructType,
     TimestampType,
 )
 
@@ -42,6 +48,7 @@ class CustomEncoder(json.JSONEncoder):
 class ArrowConverter:
     @staticmethod
     def _get_arrow_type(python_type):
+        """Get the corresponding Arrow type for a given Python type."""
         if python_type is int:
             return pa.int64()
         if python_type is str:
@@ -60,27 +67,32 @@ class ArrowConverter:
             # Handle nested Pydantic models by converting them to struct type
             return pa.struct(
                 [
-                    (name, ArrowConverter._get_arrow_type(field.annotation))
+                    pa.field(name, ArrowConverter._get_arrow_type(field.annotation))
                     for name, field in python_type.model_fields.items()
                 ]
             )
-
         return pa.string()
 
     @classmethod
-    def to_list(cls, model: type[BaseModel]) -> list[tuple[str, pa.DataType]]:
-        """Convert Pydantic model to Arrow schema."""
+    def _process_field(cls, name: str, field) -> pa.Field:
+        """Recursively process a field to handle nested structures."""
+        field_type = field.annotation
+        if not (isinstance(field_type, type) and issubclass(field_type, BaseModel)):
+            return pa.field(name, cls._get_arrow_type(field_type))
+
+        # Process nested BaseModel
+        nested_fields = [
+            cls._process_field(nested_name, nested_field)
+            for nested_name, nested_field in field_type.model_fields.items()
+        ]
+        return pa.field(name, pa.struct(nested_fields))
+
+    @classmethod
+    def to_list(cls, model: type[BaseModel]) -> list[pa.Field]:
+        """Convert Pydantic model to a list of Arrow fields."""
         fields = []
         for name, field in model.model_fields.items():
-            field_type = field.annotation
-            if isinstance(field_type, type) and issubclass(field_type, BaseModel):
-                # Flatten nested models into dot notation fields
-                for nested_name, nested_field in field_type.model_fields.items():
-                    fields.append(
-                        (f"{name}.{nested_name}", cls._get_arrow_type(nested_field.annotation))
-                    )
-            else:
-                fields.append((name, cls._get_arrow_type(field_type)))
+            fields.append(cls._process_field(name, field))
         return fields
 
     @classmethod
@@ -98,9 +110,22 @@ class IcebergConverter:
         "day": DayTransform(),
     }
 
-    @staticmethod
-    def _get_iceberg_type(arrow_type):  # noqa: C901
+    @classmethod
+    def _get_iceberg_type(cls, arrow_type):  # noqa: C901
         """Map PyArrow types to Iceberg types."""
+        # Handle struct types recursively
+        if pa.types.is_struct(arrow_type):
+            fields = [
+                NestedField(
+                    name=field.name,
+                    field_id=i + 1,  # Increment field ID to avoid collisions
+                    field_type=cls._get_iceberg_type(field.type),
+                    required=not field.nullable,
+                )
+                for i, field in enumerate(arrow_type)
+            ]
+            return StructType(fields=fields)  # Ensure fields are passed correctly
+
         # Integer types
         if arrow_type == pa.int32():
             return IntegerType()
@@ -122,62 +147,60 @@ class IcebergConverter:
             return StringType()
 
         # Binary types
-        if arrow_type == pa.binary() or arrow_type == pa.large_binary():
+        if arrow_type in {pa.binary(), pa.large_binary()}:
             return BinaryType()
 
         # Timestamp types
-        if (
-            arrow_type == pa.timestamp("us")
-            or arrow_type == pa.timestamp("us", tz="UTC")
-            or arrow_type == pa.timestamp("us", tz=None)
-        ):
+        if arrow_type in {
+            pa.timestamp("us"),
+            pa.timestamp("us", tz="UTC"),
+            pa.timestamp("us", tz=None),
+        }:
             return TimestampType()
 
         # Date type
         if arrow_type == pa.date32():
             return DateType()
 
-        # Default to string if no matching type is found
-        return StringType()
+        # Raise an error for unsupported types
+        raise ValueError(f"Unsupported PyArrow type: {arrow_type}")
 
     @classmethod
-    def to_iceberg_schema(cls, schema: pa.Schema, datetime_field: pa.Field) -> Schema:
+    def to_iceberg_schema(cls, arrow_schema: pa.Schema, datetime_field: pa.Field) -> Schema:
+        """Convert PyArrow schema to Iceberg schema."""
         fields = [
             NestedField(
-                name=datetime_field.name,
-                field_id=0,
-                field_type=cls._get_iceberg_type(datetime_field.type),
-                required=not datetime_field.nullable,
+                name=field.name,
+                field_id=i + 1,
+                field_type=cls._get_iceberg_type(field.type),
+                required=not field.nullable,
             )
+            for i, field in enumerate(arrow_schema)
         ]
-        # iterate over schema
-        for i, field in enumerate(schema):
-            fields.append(
+        # Add datetime field explicitly if provided
+        if datetime_field:
+            fields.insert(
+                0,
                 NestedField(
-                    name=field.name,
-                    field_id=i + 1,
-                    field_type=cls._get_iceberg_type(field.type),
-                    required=not field.nullable,
-                )
+                    name=datetime_field.name,
+                    field_id=0,
+                    field_type=cls._get_iceberg_type(datetime_field.type),
+                    required=not datetime_field.nullable,
+                ),
             )
         return Schema(*fields)
 
     @classmethod
-    def to_partition_spec(
-        cls,
-        transformation: str,
-    ) -> PartitionSpec:
-        partitions = []
-        if (fn := cls.PARTITION_TRANSFORMATIONS.get(transformation)) is None:
+    def to_partition_spec(cls, transformation: str) -> PartitionSpec:
+        """Create an Iceberg partition spec."""
+        if (transform := cls.PARTITION_TRANSFORMATIONS.get(transformation)) is None:
             raise ValueError(f"Unsupported partition transformation: {transformation}")
 
-        partitions.append(
-            PartitionField(
-                name=transformation,
-                source_id=0,
-                field_id=1001,
-                transform=fn,
-            )
+        partition_field = PartitionField(
+            name="partition",
+            source_id=0,
+            field_id=1001,
+            transform=transform,
         )
 
-        return PartitionSpec(*partitions)
+        return PartitionSpec(partition_field)

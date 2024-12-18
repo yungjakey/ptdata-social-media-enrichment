@@ -6,7 +6,7 @@ from .base import BaseInferenceModel
 
 
 class WissenNeed(BaseModel):
-    type: Literal[
+    need: Literal[
         "keep me engaged",
         "update me",
     ] = Field(
@@ -24,7 +24,7 @@ class WissenNeed(BaseModel):
 
 
 class VerstehenNeed(BaseModel):
-    type: Literal[
+    need: Literal[
         "educate me",
         "give me perspective",
     ] = Field(
@@ -42,7 +42,7 @@ class VerstehenNeed(BaseModel):
 
 
 class FuehlenNeed(BaseModel):
-    type: Literal[
+    need: Literal[
         "connect me",
         "help me",
     ] = Field(
@@ -60,7 +60,7 @@ class FuehlenNeed(BaseModel):
 
 
 class MachenNeed(BaseModel):
-    type: Literal[
+    need: Literal[
         "inspire me",
         "divert me",
     ] = Field(
@@ -105,7 +105,7 @@ class UserNeeds(BaseInferenceModel):
             "You are a social media expert tasked with analyzing social media posts by viewing details and metrics. "
             "Analyze which needs the following social media post addresses and provide a needs analysis result. "
             "For each need category (wissen, verstehen, fuehlen, machen), provide: "
-            "- The specific type from the allowed options"
+            "- The specific need from the allowed options"
             "- A score (0-1) indicating how strongly this need is addressed "
             "- A confidence score (0-1) for the total assessment "
             "Finally, provide an overall confidence score (0-1) and a summaryfor the entire analysis."
