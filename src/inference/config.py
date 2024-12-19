@@ -91,11 +91,11 @@ class InferenceConfig(BaseConfig):
         ge=0.0,
         le=1.0,
     )
-    max_tokens: int | None = Field(
-        default=None,
+    token_limit: int | None = Field(
+        default=8192,
         description="Maximum number of tokens to generate",
         ge=0,
-        le=16384,
+        le=8192,
     )
     timeout: int | None = Field(
         default=None,

@@ -8,6 +8,7 @@ import logging
 
 import pyarrow as pa
 import tenacity
+import tiktoken
 from openai import AsyncAzureOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
 
@@ -17,6 +18,14 @@ from src.common.utils import ArrowConverter, CustomEncoder
 from .config import InferenceConfig
 
 logger = logging.getLogger(__name__)
+
+
+def get_max_tokens(sysmsg, usrmsg, model_limit=8192, buffer=50):
+    encoding = tiktoken.encoding_for_model("gpt-4")
+    sysmsg_tokens = len(encoding.encode(sysmsg))
+    usrmsg_tokens = len(encoding.encode(usrmsg))
+    total_used = sysmsg_tokens + usrmsg_tokens
+    return max(0, model_limit - total_used - buffer)  # Reserve a buffer for safety
 
 
 class InferenceClient(ComponentFactory[InferenceConfig]):
@@ -85,10 +94,10 @@ class InferenceClient(ComponentFactory[InferenceConfig]):
                 response_format=self.model,
                 model=self.config.engine,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
+                max_tokens=get_max_tokens(sysmsg, usrmsg, model_limit=self.config.token_limit),
                 n=1,
             )
-            logger.debug(f"Completion object: {completion}")
+            logger.debug(f"Completion object: {json.dumps(completion, indent=2)}")
 
             if ((choice := completion.choices) is None) or (len(choice) == 0):
                 raise ValueError("No completion choices returned")
